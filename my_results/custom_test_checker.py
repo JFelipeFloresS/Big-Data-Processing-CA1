@@ -77,15 +77,16 @@ if __name__ == '__main__':
     # 1. We get the input values
     ex_no = "1" # 1 - 7
     ex_type = "core" # core or dataframes
+    ex_size = "small" # small or entire
 
     # 1.1. If the program is called from console, we modify the parameters
     if (len(sys.argv) > 1):
         # 2.1. We get the student folder path
         ex_no = sys.argv[1]
         ex_type = sys.argv[2]
-
+        ex_size = sys.argv[3]
     # both files have the same name, the only difference is the folder they are in
-    file_name = f"A01_ex{ex_no}_spark_{ex_type}/A01_ex{ex_no}_spark_{ex_type}_small_dataset.txt"
+    file_name = f"A01_ex{ex_no}_spark_{ex_type}/A01_ex{ex_no}_spark_{ex_type}_{ex_size}_dataset.txt"
 
     # get this file's path
     this_file_path = sys.path[0]

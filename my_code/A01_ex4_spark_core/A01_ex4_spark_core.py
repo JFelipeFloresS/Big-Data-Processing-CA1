@@ -113,10 +113,8 @@ def my_main(sc,
         return (-1) * delay_limit <= delay <= delay_limit
 
     def map_to_percentage(x):
-        bus_line = x[BUS_LINE]
-        hour = x[DATE].split()[1][:2]
         on_schedule = 1 if is_bus_on_schedule(x[DELAY], delay_limit) else 0
-        return ((bus_line, hour), (on_schedule, 1))
+        return (x[BUS_LINE], (on_schedule, 1))
 
     mappedRDD = filteredRDD.map(map_to_percentage)
 
@@ -125,8 +123,8 @@ def my_main(sc,
 
     # 6. Operation T6: 'map' to calculate the percentage of buses on schedule and format the output as (Bus_Line, Percentage on schedule, Total number o measurements of the bus line, Total number of measurement of the bus line)
     def format_output(x):
-        (bus_line, hour), (on_schedule, total) = x
-        percentage = round((on_schedule / total) * 100, 2) if total != 0 else 0
+        bus_line, (on_schedule, total) = x
+        percentage = round((on_schedule / total) * 100, 2)
         return (bus_line, percentage, total, on_schedule)
 
     solutionRDD = reducedRDD.map(format_output)
