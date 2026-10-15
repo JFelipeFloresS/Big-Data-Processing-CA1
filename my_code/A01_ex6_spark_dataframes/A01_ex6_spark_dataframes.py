@@ -1,0 +1,125 @@
+# --------------------------------------------------------
+#
+# PYTHON PROGRAM DEFINITION
+#
+# The knowledge a computer has of Python can be specified in 3 levels:
+# (1) Prelude knowledge --> The computer has it by default.
+# (2) Borrowed knowledge --> The computer gets this knowledge from 3rd party libraries defined by others
+#                            (but imported by us in this program).
+# (3) Generated knowledge --> The computer gets this knowledge from the new functions defined by us in this program.
+#
+# When launching in a terminal the command:
+# user:~$ python3 this_file.py
+# our computer first processes this PYTHON PROGRAM DEFINITION section of the file.
+# On it, our computer enhances its Python knowledge from levels (2) and (3) with the imports and new functions
+# defined in the program. However, it still does not execute anything.
+#
+# --------------------------------------------------------
+
+
+# ------------------------------------------
+# IMPORTS
+# ------------------------------------------
+import pyspark
+import pyspark.sql.functions
+import sys
+
+
+# ------------------------------------------
+# FUNCTION my_main
+# ------------------------------------------
+def my_main(spark,
+            my_dataset_dir,
+            current_time,
+            seconds_horizon
+           ):
+
+    # 1. We define the Schema of our DF.
+    my_schema = pyspark.sql.types.StructType(
+        [pyspark.sql.types.StructField("date", pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField("busLineID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("busLinePatternID", pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField("congestion", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("longitude", pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField("latitude", pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField("delay", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("vehicleID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("closerStopID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("atStop", pyspark.sql.types.IntegerType(), False)
+         ])
+
+    # 2. Operation C1: 'read'
+    inputDF = spark.read.format("csv") \
+        .option("delimiter", ",") \
+        .option("quote", "") \
+        .option("header", "false") \
+        .schema(my_schema) \
+        .load(my_dataset_dir)
+
+    # ---------------------------------------
+    # TO BE COMPLETED
+    # ---------------------------------------
+    pass
+
+
+
+
+
+
+    # ---------------------------------------
+
+    # Operation A1: 'collect'
+    resVAL = solutionDF.collect()
+    for item in resVAL:
+        print(item)
+
+
+# --------------------------------------------------------
+#
+# PYTHON PROGRAM EXECUTION
+#
+# Once our computer has finished processing the PYTHON PROGRAM DEFINITION section its knowledge is set.
+# Now its time to apply this knowledge.
+#
+# When launching in a terminal the command:
+# user:~$ python3 this_file.py
+# our computer finally processes this PYTHON PROGRAM EXECUTION section, which:
+# (i) Specifies the function F to be executed.
+# (ii) Define any input parameter such this function F has to be called with.
+#
+# --------------------------------------------------------
+if __name__ == '__main__':
+    # 1. We use as many input arguments as needed
+
+    # 1.1. We get the dataset directory
+    my_dataset_dir = "../../FileStore/tables/my_datasets/A01_micro_dataset_6/"
+    #my_dataset_dir = "../../FileStore/tables/my_datasets/my_dataset_complete/"
+
+    # 1.2. We get the current_time
+    current_time = "2013-01-09 06:00:00"
+
+    # 1.3. We get the seconds_horizon
+    seconds_horizon = 1800
+
+    # 1.4. We call to the program from terminal
+    if (len(sys.argv) > 3):
+       my_dataset_dir = sys.argv[1]
+       current_time = sys.argv[2]
+       seconds_horizon = int(sys.argv[3])
+
+    # 2. We configure the Spark Session
+    spark = pyspark.sql.SparkSession.builder.getOrCreate()
+    spark.sparkContext.setLogLevel('WARN')
+
+    # 3. We call to our main function
+    my_main(spark,
+            my_dataset_dir,
+            current_time,
+            seconds_horizon
+           )
+
+    print("\n\n\n--- Completed ---")
+
+
+# python3 ./A01_ex6_spark_dataframes.py "../../FileStore/tables/my_datasets/A01_micro_dataset_6/" "2013-01-09 06:00:00" 1800 > "../../my_results/Student_Solutions/A01_ex6_spark_dataframes/A01_ex6_spark_dataframes_small_dataset.txt"
+# python3 ./A01_ex6_spark_dataframes.py "../../FileStore/tables/my_datasets/my_dataset_complete/" "2013-01-09 06:00:00" 1800 > "../../my_results/Student_Solutions/A01_ex6_spark_dataframes/A01_ex6_spark_dataframes_entire_dataset.txt"
