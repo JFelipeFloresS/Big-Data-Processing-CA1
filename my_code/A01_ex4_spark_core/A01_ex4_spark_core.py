@@ -87,7 +87,6 @@ def process_line(line):
     # 4. We return res
     return res
 
-
 # ------------------------------------------
 # FUNCTION my_main
 # ------------------------------------------
@@ -101,15 +100,36 @@ def my_main(sc,
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 2. Operation T1: 'map'
+    processedRDD = inputRDD.map(process_line)
 
+    # 3. Operation T2: 'filter' to keep only the records that match the specified bus lines and hours only on saturday or sunday
+    filteredRDD = processedRDD.filter(lambda x: x[BUS_LINE] in line_list and
+                                      x[DATE].split()[1][:2] in hours_list and
+                                      datetime.datetime.strptime(x[DATE], "%Y-%m-%d %H:%M:%S").weekday() in [5, 6])
 
+    # 4. Operation T3: 'map' to create a new RDD with the percentage of buses on schedule for each bus line and hour
+    def is_bus_on_schedule(delay, delay_limit):
+        return (-1) * delay_limit <= delay <= delay_limit
 
+    def map_to_percentage(x):
+        bus_line = x[BUS_LINE]
+        hour = x[DATE].split()[1][:2]
+        on_schedule = 1 if is_bus_on_schedule(x[DELAY], delay_limit) else 0
+        return ((bus_line, hour), (on_schedule, 1))
 
+    mappedRDD = filteredRDD.map(map_to_percentage)
 
+    # 5. Operation T4: 'reduceByKey' to sum the on_schedule counts and total counts for each bus line and hour
+    reducedRDD = mappedRDD.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]))
+
+    # 6. Operation T6: 'map' to calculate the percentage of buses on schedule and format the output as (Bus_Line, Percentage on schedule, Total number o measurements of the bus line, Total number of measurement of the bus line)
+    def format_output(x):
+        (bus_line, hour), (on_schedule, total) = x
+        percentage = round((on_schedule / total) * 100, 2) if total != 0 else 0
+        return (bus_line, percentage, total, on_schedule)
+
+    solutionRDD = reducedRDD.map(format_output)
 
     # ---------------------------------------
 
