@@ -57,15 +57,35 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 3. Operation T1: 'select' keep date, bus line, and delay. add is on schedule column based on delay limit
+    infoDF = inputDF.select("date", "busLineID", "delay") \
+        .withColumn("isOnSchedule", pyspark.sql.functions.when(
+            (inputDF["delay"] >= -delay_limit) & (inputDF["delay"] <= delay_limit), 1).otherwise(0))
 
+    # 4. Operation T2: 'filter' to keep only the records that match the specified bus lines and hours only on saturday or sunday
+    filteredDF = infoDF.filter(
+        (infoDF["busLineID"].isin(line_list)) &
+        (infoDF["date"].substr(12, 2).isin(hours_list)) &
+        (pyspark.sql.functions.dayofweek(infoDF["date"]).isin([7, 1]))
+    )
 
+    # 5. Operation T3: 'aggregation' to calculate the percentage of buses on schedule
+    solutionDF = filteredDF.groupBy("busLineID").agg(
+        (pyspark.sql.functions.sum("isOnSchedule") / pyspark.sql.functions.count("*") * 100).alias("percentage"),
+        pyspark.sql.functions.count("*").alias("total"),
+        pyspark.sql.functions.sum("isOnSchedule").alias("onTime")
+    )
 
+    # 6. Operation T4: 'select' to format the output as (Bus_Line, Percentage on schedule, Total number o measurements of the bus line, Total number of measurement of the bus line)
+    solutionDF = solutionDF.select(
+        "busLineID",
+        pyspark.sql.functions.round("percentage", 2).alias("percentage"),
+        "total",
+        "onTime"
+    ).orderBy("busLineID")
 
-
+    # 7. Operation T5: 'orderBy' to sort the results by percentage in descending order. and then by busLineID in ascending order
+    solutionDF = solutionDF.orderBy(pyspark.sql.functions.desc("percentage"), "busLineID")
 
     # ---------------------------------------
 
