@@ -64,6 +64,7 @@ def my_main(my_file_1, my_file_2):
     else:
         print("Sorry, the output of the file is incorrect!")
     print("----------------------------------------------------------")
+    return res
 
 
 # ---------------------------------------------------------------
@@ -79,21 +80,58 @@ if __name__ == '__main__':
     ex_type = "core" # core or dataframes
     ex_size = "small" # small or entire
 
+    ex_nos = ["1", "2", "3", "4", "5", "6", "7"]
+    ex_types = ["core", "dataframes"]
+    ex_sizes = ["small", "entire"]
+
     # 1.1. If the program is called from console, we modify the parameters
-    if (len(sys.argv) > 1):
+    if len(sys.argv) > 1:
         # 2.1. We get the student folder path
-        ex_no = sys.argv[1]
-        ex_type = sys.argv[2]
-        ex_size = sys.argv[3]
-    # both files have the same name, the only difference is the folder they are in
-    file_name = f"A01_ex{ex_no}_spark_{ex_type}/A01_ex{ex_no}_spark_{ex_type}_{ex_size}_dataset.txt"
+        ex_nos = [sys.argv[1]]
+        ex_types = [sys.argv[2]]
+        ex_sizes = [sys.argv[3]]
 
-    # get this file's path
-    this_file_path = sys.path[0]
+    failed_tests = []
+    skipped_tests = 0
+    total_tests = len(ex_nos) * len(ex_types) * len(ex_sizes)
 
-    # 2. We get the folders to explore
-    assignment_solution_file = this_file_path + "/Assignment_Solutions/" + file_name
-    student_solution_file = this_file_path + "/Student_Solutions/" + file_name
+    for ex_no in ex_nos:
+        for ex_type in ex_types:
+            for ex_size in ex_sizes:
+                # both files have the same name, the only difference is the folder they are in
+                file_name = f"A01_ex{ex_no}_spark_{ex_type}/A01_ex{ex_no}_spark_{ex_type}_{ex_size}_dataset.txt"
 
-    # 3. We call to my_main
-    my_main(assignment_solution_file, student_solution_file)
+                # get this file's path
+                this_file_path = sys.path[0]
+
+                # 2. We get the folders to explore
+                assignment_solution_file = this_file_path + "/Assignment_Solutions/" + file_name
+                student_solution_file = this_file_path + "/Student_Solutions/" + file_name
+
+                # 3. We call to my_main
+                print(f"Exercise {ex_no} - Type: {ex_type} - Dataset: {ex_size}")
+                is_passed = False
+                is_skipped = False
+                try:
+                    is_passed = my_main(assignment_solution_file, student_solution_file)
+                except Exception as e:
+                    if "No such file or directory" in str(e):
+                        print(f"Test skipped. File not found.")
+                        is_skipped = True
+                    else:
+                        print(f"Test failed: {e}")
+
+                if is_skipped:
+                    skipped_tests += 1
+                elif not is_passed:
+                    failed_tests.append((ex_no, ex_type, ex_size))
+
+    print(f"\nTotal tests: {total_tests}")
+    print(f"Failed tests: {len(failed_tests)}")
+    print(f"Skipped tests: {skipped_tests}")
+    if failed_tests:
+        print("Failed test details:")
+        for test in failed_tests:
+            print(f"Exercise {test[0]} - Type: {test[1]} - Dataset: {test[2]}")
+    else:
+        print("All tests passed!")
