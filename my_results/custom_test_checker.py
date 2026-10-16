@@ -92,7 +92,7 @@ if __name__ == '__main__':
         ex_sizes = [sys.argv[3]]
 
     failed_tests = []
-    skipped_tests = 0
+    skipped_tests = set()
     total_tests = len(ex_nos) * len(ex_types) * len(ex_sizes)
 
     for ex_no in ex_nos:
@@ -122,7 +122,7 @@ if __name__ == '__main__':
                         print(f"Test failed: {e}")
 
                 if is_skipped:
-                    skipped_tests += 1
+                    skipped_tests.add(ex_no)
                 elif not is_passed:
                     failed_tests.append((ex_no, ex_type, ex_size))
 
