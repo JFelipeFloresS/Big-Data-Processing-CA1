@@ -93,15 +93,50 @@ def my_main(sc,
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 2. Operation T1: 'map' to convert each line into a tuple of parameters
+    tupleRDD = inputRDD.map(process_line)
+
+    # 3. Operation T2: 'filter' to keep only the tuples with the specified bus_line_id and day_picked
+    filteredRDD = tupleRDD.filter(lambda x: x[BUS_LINE] == bus_line_id and x[DATE].startswith(day_picked))
+
+    # 4. Operation T3: 'sortBy' to have consecutive records for the same vehicle
+    sortedRDD = filteredRDD.sortBy(lambda x: (x[VEHICLE], x[DATE]))
+
+    PREVIOUS_DATE = AT_STOP + 1  # New column to store the previous date for each vehicle
+    GHOST_GAP = PREVIOUS_DATE + 1  # New column to indicate ghost gaps
+
+    # 5. Operation T4: 'map' to calculate the time difference between consecutive records for the same vehicle
+    def calculate_time_diff(records):
+        """
+        :param records:
+        :return: records with the additional information of the previous date and the time difference between consecutive records for the same vehicle
+        """
+        previous_record = None
+        for record in records:
+            # when looping through all records we can't assume that the previous record is from the same vehicle, so we need to check if the vehicle has changed
+            if previous_record is not None and record[VEHICLE] != previous_record[VEHICLE]:
+                previous_record = None
+
+            if previous_record is not None:
+                previous_date = datetime.datetime.strptime(previous_record[DATE], "%Y-%m-%d %H:%M:%S")
+                current_date = datetime.datetime.strptime(record[DATE], "%Y-%m-%d %H:%M:%S")
+                time_diff = int((current_date - previous_date).total_seconds())
+                yield record + (previous_record[DATE], time_diff)
+            else:
+                yield record + (None, 0)  # For the first record of each vehicle, we set the previous date to None and time difference to 0
+            previous_record = record
 
 
+    infoRDD = sortedRDD.mapPartitions(calculate_time_diff)
 
+    # 6. Operation T5: 'filter' to keep only the records where the time difference exceeds the gap_limit_seconds
+    ghost_gapRDD = infoRDD.filter(lambda x: x[GHOST_GAP] > gap_limit_seconds)
 
+    # 7. Operation T6: 'sortBy' to sort the final RDD by the starting time of the ghost gap
+    solutionRDD = ghost_gapRDD.sortBy(lambda x: x[PREVIOUS_DATE])
 
+    # 8. Operation T7: 'map' to format the output as (Bus_Line, Vehicle, Previous_Date, Current_Date, Time_Difference)
+    solutionRDD = solutionRDD.map(lambda x: (x[VEHICLE], x[PREVIOUS_DATE], x[DATE], x[GHOST_GAP]))
 
     # ---------------------------------------
 

@@ -46,25 +46,29 @@ def my_main(my_file_1, my_file_2):
     size_1 = len(content_1)
 
     # 5.1. If both files have the same length
-    if (size_1 == len(content_2)):
+    err = None
+    if size_1 == len(content_2):
         # 5.1.1. We compare them line by line
         for index in range(size_1):
-            if (content_1[index] != content_2[index]):
+            if content_1[index] != content_2[index]:
                 res = False
+                err = f"Line {index + 1} is different:\nExpected: {content_1[index]}\nFound: {content_2[index]}"
                 break
 
     # 5.2. If the files have different lengths then they are definitely not equal
     else:
         res = False
+        diff = len(content_2) - size_1
+        err = f"{diff} extra rows" if diff > 0 else f"{-diff} missing rows"
 
     # 6. Print the final outcome
     print("----------------------------------------------------------")
-    if (res == True):
+    if res:
         print("Congratulations, the code passed the test!")
     else:
         print("Sorry, the output of the file is incorrect!")
     print("----------------------------------------------------------")
-    return res
+    return res, err
 
 
 # ---------------------------------------------------------------
@@ -92,7 +96,7 @@ if __name__ == '__main__':
         ex_sizes = [sys.argv[3]]
 
     failed_tests = []
-    skipped_tests = set()
+    skipped_tests = {}
     total_tests = len(ex_nos) * len(ex_types) * len(ex_sizes)
 
     for ex_no in ex_nos:
@@ -113,7 +117,7 @@ if __name__ == '__main__':
                 is_passed = False
                 is_skipped = False
                 try:
-                    is_passed = my_main(assignment_solution_file, student_solution_file)
+                    is_passed, err = my_main(assignment_solution_file, student_solution_file)
                 except Exception as e:
                     if "No such file or directory" in str(e):
                         print(f"Test skipped. File not found.")
@@ -122,9 +126,11 @@ if __name__ == '__main__':
                         print(f"Test failed: {e}")
 
                 if is_skipped:
-                    skipped_tests.add(ex_no)
+                    if ex_no not in skipped_tests:
+                        skipped_tests[ex_no] = 0
+                    skipped_tests[ex_no] += 1
                 elif not is_passed:
-                    failed_tests.append((ex_no, ex_type, ex_size))
+                    failed_tests.append((ex_no, ex_type, ex_size, err))
 
     print(f"\nTotal tests: {total_tests}")
     print(f"Failed tests: {len(failed_tests)}")
@@ -133,5 +139,6 @@ if __name__ == '__main__':
         print("Failed test details:")
         for test in failed_tests:
             print(f"Exercise {test[0]} - Type: {test[1]} - Dataset: {test[2]}")
+            print(f"Error: {test[3]}")
     else:
         print("All tests passed!")
