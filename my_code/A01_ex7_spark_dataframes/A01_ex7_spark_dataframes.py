@@ -25,6 +25,19 @@ import pyspark.sql.functions
 import sys
 import math
 
+# ------------------------------------------
+# CONSTANTS
+# ------------------------------------------
+DATE = "date" # pyspark.sql.types.StringType
+BUS_LINE_ID = "busLineID" # pyspark.sql.types.IntegerType
+BUS_LINE_PATTERN_ID = "busLinePatternID" # pyspark.sql.types.StringType
+CONGESTION = "congestion" # pyspark.sql.types.IntegerType
+LONGITUDE = "longitude" # pyspark.sql.types.FloatType
+LATITUDE = "latitude" # pyspark.sql.types.FloatType
+DELAY = "delay" # pyspark.sql.types.IntegerType
+VEHICLE_ID = "vehicleID" # pyspark.sql.types.IntegerType
+CLOSER_STOP_ID = "closerStopID" # pyspark.sql.types.IntegerType
+AT_STOP = "atStop" # pyspark.sql.types.IntegerType
 
 # ------------------------------------------
 # FUNCTION my_main
@@ -38,16 +51,16 @@ def my_main(spark,
 
     # 1. We define the Schema of our DF.
     my_schema = pyspark.sql.types.StructType(
-        [pyspark.sql.types.StructField("date", pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField("busLineID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("busLinePatternID", pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField("congestion", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("longitude", pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField("latitude", pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField("delay", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("vehicleID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("closerStopID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("atStop", pyspark.sql.types.IntegerType(), False)
+        [pyspark.sql.types.StructField(DATE, pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField(BUS_LINE_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(BUS_LINE_PATTERN_ID, pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField(CONGESTION, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(LONGITUDE, pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField(LATITUDE, pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField(DELAY, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(VEHICLE_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(CLOSER_STOP_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(AT_STOP, pyspark.sql.types.IntegerType(), False)
          ])
 
     # 2. Operation C1: 'read'

@@ -27,26 +27,16 @@ import sys
 # ------------------------------------------
 # CONSTANTS
 # ------------------------------------------
-# (00) Date => The date of the measurement. String <%Y-%m-%d %H:%M:%S> (e.g., "2013-01-01 13:00:02").
-# (01) Bus_Line => The bus line. Int (e.g., 120).
-# (02) Bus_Line_Pattern => The pattern of bus stops followed by the bus. String (e.g., "027B1001"). It can be empty (e.g., "").
-# (03) Congestion => On whether the bus is at a traffic jam (No -> 0 and Yes -> 1). Int (e.g., 0).
-# (04) Longitude => Longitude position of the bus. Float (e.g., -6.269634).
-# (05) Latitude = > Latitude position of the bus. Float (e.g., 53.360504).
-# (06) Delay => Delay of the bus in seconds (negative if ahead of schedule). Int (e.g., 90).
-# (07) Vehicle => An identifier for the bus vehicle. Int (e.g., 33304)
-# (08) Closer_Stop => An idenfifier for the closest bus stop given the current bus position. Int (e.g., 7486). It can be no bus stop, in which case it takes value -1 (e.g., -1).
-# (09) At_Stop => On whether the bus is currently at the bus stop (No -> 0 and Yes -> 1). Int (e.g., 0).
-DATE = 0
-BUS_LINE = 1
-BUS_LINE_PATTERN = 2
-CONGESTION = 3
-LONGITUDE = 4
-LATITUDE = 5
-DELAY = 6
-VEHICLE = 7
-CLOSER_STOP = 8
-AT_STOP = 9
+DATE = 0 # (00) Date => The date of the measurement. String <%Y-%m-%d %H:%M:%S> (e.g., "2013-01-01 13:00:02").
+BUS_LINE = 1 # (01) Bus_Line => The bus line. Int (e.g., 120).
+BUS_LINE_PATTERN = 2 # (02) Bus_Line_Pattern => The pattern of bus stops followed by the bus. String (e.g., "027B1001"). It can be empty (e.g., "").
+CONGESTION = 3 # (03) Congestion => On whether the bus is at a traffic jam (No -> 0 and Yes -> 1). Int (e.g., 0).
+LONGITUDE = 4 # (04) Longitude => Longitude position of the bus. Float (e.g., -6.269634).
+LATITUDE = 5 # (05) Latitude = > Latitude position of the bus. Float (e.g., 53.360504).
+DELAY = 6 # (06) Delay => Delay of the bus in seconds (negative if ahead of schedule). Int (e.g., 90).
+VEHICLE = 7 # (07) Vehicle => An identifier for the bus vehicle. Int (e.g., 33304)
+CLOSER_STOP = 8 # (08) Closer_Stop => An idenfifier for the closest bus stop given the current bus position. Int (e.g., 7486). It can be no bus stop, in which case it takes value -1 (e.g., -1).
+AT_STOP = 9 # (09) At_Stop => On whether the bus is currently at the bus stop (No -> 0 and Yes -> 1). Int (e.g., 0).
 
 
 # ------------------------------------------

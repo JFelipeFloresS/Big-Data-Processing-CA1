@@ -24,6 +24,19 @@ import pyspark
 import pyspark.sql.functions
 import sys
 
+# ------------------------------------------
+# CONSTANTS
+# ------------------------------------------
+DATE = "date" # pyspark.sql.types.StringType
+BUS_LINE_ID = "busLineID" # pyspark.sql.types.IntegerType
+BUS_LINE_PATTERN_ID = "busLinePatternID" # pyspark.sql.types.StringType
+CONGESTION = "congestion" # pyspark.sql.types.IntegerType
+LONGITUDE = "longitude" # pyspark.sql.types.FloatType
+LATITUDE = "latitude" # pyspark.sql.types.FloatType
+DELAY = "delay" # pyspark.sql.types.IntegerType
+VEHICLE_ID = "vehicleID" # pyspark.sql.types.IntegerType
+CLOSER_STOP_ID = "closerStopID" # pyspark.sql.types.IntegerType
+AT_STOP = "atStop" # pyspark.sql.types.IntegerType
 
 # ------------------------------------------
 # FUNCTION my_main
@@ -37,16 +50,16 @@ def my_main(spark,
 
     # 1. We define the Schema of our DF.
     my_schema = pyspark.sql.types.StructType(
-        [pyspark.sql.types.StructField("date", pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField("busLineID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("busLinePatternID", pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField("congestion", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("longitude", pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField("latitude", pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField("delay", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("vehicleID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("closerStopID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("atStop", pyspark.sql.types.IntegerType(), False)
+        [pyspark.sql.types.StructField(DATE, pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField(BUS_LINE_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(BUS_LINE_PATTERN_ID, pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField(CONGESTION, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(LONGITUDE, pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField(LATITUDE, pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField(DELAY, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(VEHICLE_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(CLOSER_STOP_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(AT_STOP, pyspark.sql.types.IntegerType(), False)
          ])
 
     # 2. Operation C1: 'read'
@@ -57,35 +70,41 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
+    # new constants for the columns we will create
+    IS_ON_SCHEDULE = "isOnSchedule"
+    PERCENTAGE = "percentage"
+    TOTAL = "total"
+    ON_TIME = "onTime"
+
     # 3. Operation T1: 'select' keep date, bus line, and delay. add is on schedule column based on delay limit
-    infoDF = inputDF.select("date", "busLineID", "delay") \
-        .withColumn("isOnSchedule", pyspark.sql.functions.when(
-            (inputDF["delay"] >= -delay_limit) & (inputDF["delay"] <= delay_limit), 1).otherwise(0))
+    infoDF = inputDF.select(DATE, BUS_LINE_ID, DELAY) \
+        .withColumn(IS_ON_SCHEDULE, pyspark.sql.functions.when(
+            (inputDF[DELAY] >= -delay_limit) & (inputDF[DELAY] <= delay_limit), 1).otherwise(0))
 
     # 4. Operation T2: 'filter' to keep only the records that match the specified bus lines and hours only on saturday or sunday
     filteredDF = infoDF.filter(
-        (infoDF["busLineID"].isin(line_list)) &
-        (infoDF["date"].substr(12, 2).isin(hours_list)) &
-        (pyspark.sql.functions.dayofweek(infoDF["date"]).isin([7, 1]))
+        (infoDF[BUS_LINE_ID].isin(line_list)) &
+        (infoDF[DATE].substr(12, 2).isin(hours_list)) &
+        (pyspark.sql.functions.dayofweek(infoDF[DATE]).isin([7, 1]))
     )
 
     # 5. Operation T3: 'aggregation' to calculate the percentage of buses on schedule
-    solutionDF = filteredDF.groupBy("busLineID").agg(
-        (pyspark.sql.functions.sum("isOnSchedule") / pyspark.sql.functions.count("*") * 100).alias("percentage"),
-        pyspark.sql.functions.count("*").alias("total"),
-        pyspark.sql.functions.sum("isOnSchedule").alias("onTime")
+    solutionDF = filteredDF.groupBy(BUS_LINE_ID).agg(
+        (pyspark.sql.functions.sum(IS_ON_SCHEDULE) / pyspark.sql.functions.count("*") * 100).alias(PERCENTAGE),
+        pyspark.sql.functions.count("*").alias(TOTAL),
+        pyspark.sql.functions.sum(IS_ON_SCHEDULE).alias(ON_TIME)
     )
 
     # 6. Operation T4: 'select' to format the output as (Bus_Line, Percentage on schedule, Total number o measurements of the bus line, Total number of measurement of the bus line)
     solutionDF = solutionDF.select(
-        "busLineID",
-        pyspark.sql.functions.round("percentage", 2).alias("percentage"),
-        "total",
-        "onTime"
-    ).orderBy("busLineID")
+        BUS_LINE_ID,
+        pyspark.sql.functions.round(PERCENTAGE, 2).alias(PERCENTAGE),
+        TOTAL,
+        ON_TIME
+    ).orderBy(BUS_LINE_ID)
 
     # 7. Operation T5: 'orderBy' to sort the results by percentage in descending order. and then by busLineID in ascending order
-    solutionDF = solutionDF.orderBy(pyspark.sql.functions.desc("percentage"), "busLineID")
+    solutionDF = solutionDF.orderBy(pyspark.sql.functions.desc(PERCENTAGE), BUS_LINE_ID)
 
     # ---------------------------------------
 

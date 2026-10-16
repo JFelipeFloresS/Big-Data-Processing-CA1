@@ -24,6 +24,19 @@ import pyspark
 import pyspark.sql.functions
 import sys
 
+# ------------------------------------------
+# CONSTANTS
+# ------------------------------------------
+DATE = "date" # pyspark.sql.types.StringType
+BUS_LINE_ID = "busLineID" # pyspark.sql.types.IntegerType
+BUS_LINE_PATTERN_ID = "busLinePatternID" # pyspark.sql.types.StringType
+CONGESTION = "congestion" # pyspark.sql.types.IntegerType
+LONGITUDE = "longitude" # pyspark.sql.types.FloatType
+LATITUDE = "latitude" # pyspark.sql.types.FloatType
+DELAY = "delay" # pyspark.sql.types.IntegerType
+VEHICLE_ID = "vehicleID" # pyspark.sql.types.IntegerType
+CLOSER_STOP_ID = "closerStopID" # pyspark.sql.types.IntegerType
+AT_STOP = "atStop" # pyspark.sql.types.IntegerType
 
 # ------------------------------------------
 # FUNCTION my_main
@@ -34,16 +47,16 @@ def my_main(spark,
 
     # 1. We define the Schema of our DF.
     my_schema = pyspark.sql.types.StructType(
-        [pyspark.sql.types.StructField("date", pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField("busLineID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("busLinePatternID", pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField("congestion", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("longitude", pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField("latitude", pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField("delay", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("vehicleID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("closerStopID", pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField("atStop", pyspark.sql.types.IntegerType(), False)
+        [pyspark.sql.types.StructField(DATE, pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField(BUS_LINE_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(BUS_LINE_PATTERN_ID, pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField(CONGESTION, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(LONGITUDE, pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField(LATITUDE, pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField(DELAY, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(VEHICLE_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(CLOSER_STOP_ID, pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField(AT_STOP, pyspark.sql.types.IntegerType(), False)
          ])
 
     # 2. Operation C1: We apply 'read' to produce a new DF (e.g., inputDF) containing the entire dataset.
@@ -55,16 +68,16 @@ def my_main(spark,
         .load(my_dataset_dir)
 
     # 3. Operation T1: We apply 'select' to obtain a new DF (e.g., infoDF) keeping only the fields "busLineID", "vehicleID" and "delay" from inputDF.
-    infoDF = inputDF.select("busLineID", "vehicleID", "delay")
+    infoDF = inputDF.select(BUS_LINE_ID, VEHICLE_ID, DELAY)
 
     # 4. Operation P1: We apply 'persist' to keep infoDF in memory, as it is going to be used twice (once to compute the maximum delay and once to compute the minimum delay).
     infoDF = infoDF.persist()
 
     # 5. Operation T2: We apply 'orderBy' (decreasing "delay") and 'limit' to obtain a new DF (e.g., maxDF) with a single Row: the one with the maximum "delay".
-    maxDF = infoDF.orderBy(pyspark.sql.functions.desc("delay")).limit(1)
+    maxDF = infoDF.orderBy(pyspark.sql.functions.desc(DELAY)).limit(1)
 
     # 6. Operation T3: We apply 'orderBy' (increasing "delay") and 'limit' to obtain a new DF (e.g., minDF) with a single Row: the one with the minimum "delay".
-    minDF = infoDF.orderBy(pyspark.sql.functions.asc("delay")).limit(1)
+    minDF = infoDF.orderBy(pyspark.sql.functions.asc(DELAY)).limit(1)
 
     # 7. Operation T4: We apply 'union' to obtain a new DF (e.g., solutionDF) with the two Rows: the one of maxDF first, and the one of minDF second.
     solutionDF = maxDF.union(minDF)
