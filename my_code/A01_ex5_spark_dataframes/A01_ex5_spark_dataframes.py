@@ -23,6 +23,8 @@
 import pyspark
 import pyspark.sql.functions
 import sys
+from pyspark.sql.functions import col, lag, unix_timestamp
+from pyspark.sql import Window
 
 # ------------------------------------------
 # CONSTANTS
@@ -70,15 +72,28 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 3. Operation T1: 'filter' only the tuples with the specified bus_line_id and day_picked
+    filteredDF = inputDF.filter((inputDF[BUS_LINE_ID] == bus_line_id) & (inputDF[DATE].startswith(day_picked)))
 
+    GAP_START = "gapStart" # pyspark.sql.types.StringType
+    GAP_END = "gapEnd" # pyspark.sql.types.StringType
+    GAP_SECONDS = "gapSeconds"
 
+    # 4. Operation T3: 'window' to calculate the time difference between consecutive records for the same vehicle
+    windowSpec = Window.partitionBy(VEHICLE_ID).orderBy(DATE)
+    withLagDF = filteredDF.withColumn(GAP_START, lag(DATE).over(windowSpec)) \
+                        .withColumn(GAP_END, col(DATE)) \
+                        .withColumn(GAP_SECONDS,
+                                    (unix_timestamp(DATE) - unix_timestamp(lag(DATE).over(windowSpec))))
 
+    # 5. Operation T4: 'filter' to keep only the gaps that exceed the gap_limit_seconds
+    gapDF = withLagDF.filter((withLagDF[GAP_SECONDS] > gap_limit_seconds))
 
+    # 6. Operation T5: 'select' to keep only the relevant columns
+    solutionDF = gapDF.select(VEHICLE_ID, GAP_START, GAP_END, GAP_SECONDS)
 
+    # 7. Operation T6: 'sort' to have the final result sorted by gapStart
+    solutionDF = solutionDF.sort(GAP_START)
 
     # ---------------------------------------
 

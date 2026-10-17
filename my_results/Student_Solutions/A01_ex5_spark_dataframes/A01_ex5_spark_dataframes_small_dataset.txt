@@ -1,0 +1,6 @@
+Row(vehicleID=33491, gapStart='2013-01-07 07:00:00', gapEnd='2013-01-07 07:20:00', gapSeconds=1200)
+Row(vehicleID=33488, gapStart='2013-01-07 08:05:00', gapEnd='2013-01-07 08:20:00', gapSeconds=900)
+
+
+
+--- Completed ---
