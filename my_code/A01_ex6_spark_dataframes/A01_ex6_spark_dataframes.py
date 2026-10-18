@@ -23,6 +23,7 @@
 import pyspark
 import pyspark.sql.functions
 import sys
+from pyspark.sql.functions import col, unix_timestamp, array_sort
 
 # ------------------------------------------
 # CONSTANTS
@@ -69,15 +70,28 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 3. Operation T1: 'filter' AT_STOP = 1 and  current time within the horizon
+    current_time_ts = unix_timestamp(pyspark.sql.functions.lit(current_time), "yyyy-MM-dd HH:mm:ss")
+    end_time_ts = current_time_ts + seconds_horizon
+    filteredDF = inputDF.filter((col(AT_STOP) == 1) &
+                                (unix_timestamp(col(DATE), "yyyy-MM-dd HH:mm:ss") >= current_time_ts) &
+                                (unix_timestamp(col(DATE), "yyyy-MM-dd HH:mm:ss") <= end_time_ts))
 
+    # new constant column name for unique bus stops
+    UNIQUE_BUS_STOPS = "stops"
 
+    # 4. Operation T2: 'groupBy' bus line and aggregate unique bus stops
+    grouppedDF = filteredDF.groupBy(BUS_LINE_ID).agg(pyspark.sql.functions.collect_set(CLOSER_STOP_ID).alias(UNIQUE_BUS_STOPS))
 
+    # 5. Operation T3: 'sort' by number of unique bus stops (descending) and then by bus line id (ascending)
+    sortedDF = grouppedDF.orderBy(pyspark.sql.functions.size(col(UNIQUE_BUS_STOPS)).desc(), col(BUS_LINE_ID).asc())
 
+    # 6. Operation T4: 'filter' to keep only bus lines with the max number of unique bus stops
+    max_unique_stops = sortedDF.select(pyspark.sql.functions.size(col(UNIQUE_BUS_STOPS)).alias("num_unique_stops")).agg(pyspark.sql.functions.max("num_unique_stops")).collect()[0][0]
+    solutionDF = sortedDF.filter(pyspark.sql.functions.size(col(UNIQUE_BUS_STOPS)) == max_unique_stops)
 
+    # 7. Operation T5: 'sort' the bus stops for each bus line
+    solutionDF = solutionDF.withColumn("sorted_unique_bus_stops", pyspark.sql.functions.array_sort(col(UNIQUE_BUS_STOPS))).drop(UNIQUE_BUS_STOPS).withColumnRenamed("sorted_unique_bus_stops", UNIQUE_BUS_STOPS)
 
     # ---------------------------------------
 
