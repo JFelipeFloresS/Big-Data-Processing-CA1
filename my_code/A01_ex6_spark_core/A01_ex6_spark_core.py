@@ -92,15 +92,44 @@ def my_main(sc,
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 2. Operation C2: 'map'
+    tupleRDD = inputRDD.map(process_line)
 
+    # 3. Operation C3: 'filter' only the records that are within the time horizon with AT_STOP = 1
+    # We convert the current_time to a datetime object
+    current_time_dt = datetime.datetime.strptime(current_time, "%Y-%m-%d %H:%M:%S")
+    # We calculate the end time of the horizon
+    end_time_dt = current_time_dt + datetime.timedelta(seconds=seconds_horizon)
 
+    # We define a function to filter the records
+    def filter_records(record):
+        # We convert the record's date to a datetime object
+        record_time_dt = datetime.datetime.strptime(record[DATE], "%Y-%m-%d %H:%M:%S")
+        # We check if the record is within the time horizon and AT_STOP = 1
+        return current_time_dt <= record_time_dt <= end_time_dt and record[AT_STOP] == 1
 
+    # We apply the filter to the RDD
+    filteredRDD = tupleRDD.filter(filter_records)
 
+    # 4. Operation C4: reduce by key to get the list of unique bust stops per bus line
+    # We create a pair RDD with bus line as key and the closer stop as value
+    pairRDD = filteredRDD.map(lambda x: (x[BUS_LINE], x[CLOSER_STOP]))
 
+    # We reduce by key to get the list of unique bus stops per bus line and then count the number of unique bus stops
+    reducedRDD = (pairRDD
+                  .distinct()  # Get unique (bus line, closer stop) pairs
+                  .mapValues(lambda x: [x])  # Convert each closer stop to a list
+                  .reduceByKey(lambda a, b: a + b) # Combine lists of closer stops for each bus line
+                  .mapValues(lambda x: sorted(x)))  # sort the list of unique bus stops for each bus line
+
+    # 5. Operation C5: sort by key to have the most frequent bus lines first and then by bus line id in case of ties
+    sortedRDD = reducedRDD.sortBy(lambda x: (-len(x[1]), x[0]))  # Sort by number of unique bus stops (descending) and then by bus line id (ascending)
+
+    # 6. Operation C6: 'filter' to keep only bus lines with the max number of unique bus stops
+    # We get the maximum number of unique bus stops
+    max_unique_stops = sortedRDD.map(lambda x: len(x[1])).max()
+    # We filter the RDD to keep only bus lines with the maximum number of unique bus stops
+    solutionRDD = sortedRDD.filter(lambda x: len(x[1]) == max_unique_stops)
 
     # ---------------------------------------
 
