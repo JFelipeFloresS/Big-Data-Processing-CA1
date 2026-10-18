@@ -103,9 +103,6 @@ def my_main(sc,
     # 3. Operation T2: 'filter' + 'lambda' selecting only the lines with the right day
     filteredRDD = tupleRDD.filter(lambda x: x[DATE].startswith(day_picked))
 
-    # new column constants for the distance and speed
-    DISTANCE = AT_STOP + 1
-    SPEED = DISTANCE + 1
     DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
     EARTH_RADIUS = 6371.0
 

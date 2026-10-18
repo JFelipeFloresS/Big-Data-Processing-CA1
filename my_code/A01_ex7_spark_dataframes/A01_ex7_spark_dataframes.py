@@ -24,6 +24,7 @@ import pyspark
 import pyspark.sql.functions
 import sys
 import math
+from pyspark.sql.functions import col, unix_timestamp, array_sort, lag, avg, udf, count, format_string
 
 # ------------------------------------------
 # CONSTANTS
@@ -49,6 +50,9 @@ def my_main(spark,
             day_picked
            ):
 
+    # convert max speed accepted from m/s to km/h
+    max_speed_accepted_kmh = max_speed_accepted * 3.6
+
     # 1. We define the Schema of our DF.
     my_schema = pyspark.sql.types.StructType(
         [pyspark.sql.types.StructField(DATE, pyspark.sql.types.StringType(), False),
@@ -71,14 +75,68 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    selectedDF = inputDF.select(DATE, LONGITUDE, LATITUDE, VEHICLE_ID)
 
+    # 3. Operation T1: 'filter' only get the rows of the day picked
+    filteredDF = selectedDF.filter(col(DATE).startswith(day_picked))
 
+    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    EARTH_RADIUS = 6371.0
 
+    def hav(theta):
+        return math.sin(theta / 2) ** 2
 
+    def calculate_central_angle(lat1, lon1, lat2, lon2):
+        # Convert degrees to radians
+        lat1_rad = math.radians(lat1)
+        lon1_rad = math.radians(lon1)
+        lat2_rad = math.radians(lat2)
+        lon2_rad = math.radians(lon2)
+
+        # Haversine formula: hav(central_angle) = hav(lat2 - lat1) + (cos(lat1) * cos(lat2) * hav(lon2 - lon1))
+        h = hav(lat2_rad - lat1_rad) + (math.cos(lat1_rad) * math.cos(lat2_rad) * hav(lon2_rad - lon1_rad))
+        # invert the haversine to get the central angle: central_angle = 2 * arcsin(sqrt(h))
+        return 2 * math.asin(math.sqrt(h))
+
+    # 4. Operation T2: 'calculate speed' using the haversine formula to calculate the distance between two points on the Earth
+    def calculate_speed(lat1, lon1, lat2, lon2, time_diff_seconds):
+        if lat1 is None or time_diff_seconds is None or time_diff_seconds <= 0:
+            return None
+        central_angle = calculate_central_angle(lat1, lon1, lat2, lon2)
+        distance_km = EARTH_RADIUS * central_angle
+        speed_kmh = (distance_km / time_diff_seconds) * 3600.
+        return speed_kmh
+
+    vehicle_window = pyspark.sql.Window.partitionBy(VEHICLE_ID).orderBy(DATE)
+
+    # calculate the window's speed for each vehicle based on that vehicle's previous row's latitude, longitude, and date
+    speedDF = filteredDF.withColumn("prev_latitude", lag(LATITUDE).over(vehicle_window)) \
+        .withColumn("prev_longitude", lag(LONGITUDE).over(vehicle_window)) \
+        .withColumn("prev_date", lag(DATE).over(vehicle_window)) \
+        .withColumn("time_diff_seconds", (unix_timestamp(DATE) - unix_timestamp("prev_date")))
+
+    pairsDF = speedDF.filter(col("time_diff_seconds").isNotNull() & (col("time_diff_seconds") > 0))
+
+    # calculate the speed using the haversine formula
+    speedDF = pairsDF.withColumn("speed_kmh", udf(calculate_speed, pyspark.sql.types.FloatType())(col("prev_latitude"), col("prev_longitude"), col(LATITUDE), col(LONGITUDE), col("time_diff_seconds")))
+
+    # 5. Operation T3: 'filter' only get the rows with speed less than or equal to max_speed_accepted_kmh
+    filtered_speedDF = speedDF.filter(col("speed_kmh") <= max_speed_accepted_kmh)
+
+    # calculate the average speed for each vehicle
+    avg_speedDF = filtered_speedDF.groupBy(VEHICLE_ID).agg(avg("speed_kmh").alias("avg_speed_kmh"))
+
+    # 6. Operation T4: 'bucketize' the average speed into buckets of size bucket_size_kmh in format bucketID, vehicle in bucket count
+    bucketizedDF = avg_speedDF.withColumn("bucketID", (col("avg_speed_kmh") / bucket_size_kmh).cast("int")) \
+        .groupBy("bucketID").agg(count(VEHICLE_ID).alias("numVehicles"))
+
+    # 7. Operation T5: 'sort' the bucketizedDF by bucketID and format the output as bucketID, bucketSpeedStart_bucketSpeedEnd, numVehicles
+    solutionDF = bucketizedDF.withColumn("bucketRange",
+                                         format_string("%.1f_%.1f",
+                                                   (col("bucketID") * bucket_size_kmh),
+                                                   ((col("bucketID") + 1) * bucket_size_kmh))) \
+        .select("bucketID", "bucketRange", "numVehicles") \
+        .orderBy("bucketID")
 
 
     # ---------------------------------------

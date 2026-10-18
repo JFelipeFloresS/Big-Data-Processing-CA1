@@ -134,7 +134,7 @@ if __name__ == '__main__':
 
     print(f"\nTotal tests: {total_tests}")
     print(f"Failed tests: {len(failed_tests)}")
-    print(f"Skipped tests: {skipped_tests}")
+    print(f"Skipped tests: {skipped_tests if len(skipped_tests) > 0 else 0}")
     if failed_tests:
         print("Failed test details:")
         for test in failed_tests:
