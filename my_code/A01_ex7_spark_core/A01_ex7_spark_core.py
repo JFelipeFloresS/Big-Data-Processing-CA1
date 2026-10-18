@@ -91,18 +91,84 @@ def my_main(sc,
             day_picked
            ):
 
+    # convert max speed accepted from m/s to km/h
+    max_speed_accepted = max_speed_accepted * 3.6
+
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # ---------------------------------------
-    # TO BE COMPLETED
-    # ---------------------------------------
-    pass
+    # 2. Operation T1: 'map' + 'process_line'
+    tupleRDD = inputRDD.map(process_line)
 
+    # 3. Operation T2: 'filter' + 'lambda' selecting only the lines with the right day
+    filteredRDD = tupleRDD.filter(lambda x: x[DATE].startswith(day_picked))
 
+    # new column constants for the distance and speed
+    DISTANCE = AT_STOP + 1
+    SPEED = DISTANCE + 1
+    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+    EARTH_RADIUS = 6371.0
 
+    def hav(theta):
+        return math.sin(theta / 2) ** 2
 
+    def calculate_central_angle(lat1, lon1, lat2, lon2):
+        # Convert degrees to radians
+        lat1_rad = math.radians(lat1)
+        lon1_rad = math.radians(lon1)
+        lat2_rad = math.radians(lat2)
+        lon2_rad = math.radians(lon2)
 
+        # Haversine formula: hav(central_angle) = hav(lat2 - lat1) + (cos(lat1) * cos(lat2) * hav(lon2 - lon1))
+        h = hav(lat2_rad - lat1_rad) + (math.cos(lat1_rad) * math.cos(lat2_rad) * hav(lon2_rad - lon1_rad))
+        # invert the haversine to get the central angle: central_angle = 2 * arcsin(sqrt(h))
+        return 2 * math.asin(math.sqrt(h))
+
+    # 5. Operation T4: 'map' + 'lambda' to compute the distance travelled from last measurement and the speed in km/h, and then bucketize the speed
+    def calculate_speeds_for_vehicle(record):
+        vehicle, records = record
+        records = sorted(records, key=lambda x: x[DATE])
+
+        # compare each record with the previous one to calculate distance and speed for each vehicle
+        for prev, curr in zip(records, records[1:]):
+            # We calculate the distance using the Haversine formula
+            # formula: distance = radius_of_earth * central_angle_between_two_points
+            # hav(central_angle) = sin^2(central_angle / 2)
+            # central_angle = 2 * arcsin(sqrt(hav(lat2 - lat1) + (cos(lat1) * cos(lat2) * hav(lon2 - lon1))))
+            r = EARTH_RADIUS # Radius of earth in kilometers
+            central_angle = calculate_central_angle(prev[LATITUDE], prev[LONGITUDE], curr[LATITUDE], curr[LONGITUDE])
+            distance = central_angle * r
+
+            # We calculate the time difference in hours
+            time_diff = (datetime.datetime.strptime(curr[DATE], DATE_FORMAT) - datetime.datetime.strptime(prev[DATE], DATE_FORMAT)).total_seconds() / 3600.0
+
+            # We calculate the speed in km/h
+            if time_diff > 0:
+                yield vehicle, distance / time_diff
+
+    vehicleRDD = filteredRDD.map(lambda x: (x[VEHICLE], x)).groupByKey()
+
+    filtered_speed_RDD = vehicleRDD.flatMap(calculate_speeds_for_vehicle)
+
+    valid_speed_RDD = filtered_speed_RDD.filter(lambda x: x[1] <= max_speed_accepted)
+
+    def get_speed_bucket_id(speed):
+        return math.floor(speed / bucket_size_kmh)
+
+    def get_speed_bucket(bucket_id):
+        bucket_start = bucket_id * bucket_size_kmh
+        bucket_end = bucket_start + bucket_size_kmh
+        return f"{bucket_start}_{bucket_end}"
+
+    average_speed_RDD = valid_speed_RDD.groupByKey().mapValues(lambda speeds: sum(speeds) / len(speeds))
+
+    bucket_count_RDD = (average_speed_RDD
+                        .map(lambda x: (get_speed_bucket_id(x[1]), 1))
+                        .reduceByKey(lambda a, b: a + b))
+
+    solutionRDD = (bucket_count_RDD
+                   .sortByKey()
+                   .map(lambda x: (x[0], get_speed_bucket(x[0]), x[1])))
 
     # ---------------------------------------
 
