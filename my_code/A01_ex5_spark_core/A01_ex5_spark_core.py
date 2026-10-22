@@ -22,7 +22,6 @@
 # ------------------------------------------
 import pyspark
 import sys
-import time
 import datetime
 
 
@@ -39,6 +38,8 @@ DELAY = 6 # (06) Delay => Delay of the bus in seconds (negative if ahead of sche
 VEHICLE = 7 # (07) Vehicle => An identifier for the bus vehicle. Int (e.g., 33304)
 CLOSER_STOP = 8 # (08) Closer_Stop => An idenfifier for the closest bus stop given the current bus position. Int (e.g., 7486). It can be no bus stop, in which case it takes value -1 (e.g., -1).
 AT_STOP = 9 # (09) At_Stop => On whether the bus is currently at the bus stop (No -> 0 and Yes -> 1). Int (e.g., 0).
+
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # ------------------------------------------
 # FUNCTION process_line
@@ -64,17 +65,40 @@ def process_line(line):
     # 3. If the list contains the right amount of parameters
     if (len(params_list) == 10):
         # 3.1. We set the right type for the parameters
-        params_list[BUS_LINE] = int(params_list[BUS_LINE])
-        params_list[CONGESTION] = int(params_list[CONGESTION])
-        params_list[LONGITUDE] = float(params_list[LONGITUDE])
-        params_list[LATITUDE] = float(params_list[LATITUDE])
-        params_list[DELAY] = int(params_list[DELAY])
-        params_list[VEHICLE] = int(params_list[VEHICLE])
-        params_list[CLOSER_STOP] = int(params_list[CLOSER_STOP])
-        params_list[AT_STOP] = int(params_list[AT_STOP])
+        params_list[1] = int(params_list[1])
+        params_list[3] = int(params_list[3])
+        params_list[4] = float(params_list[4])
+        params_list[5] = float(params_list[5])
+        params_list[6] = int(params_list[6])
+        params_list[7] = int(params_list[7])
+        params_list[8] = int(params_list[8])
+        params_list[9] = int(params_list[9])
 
         # 3.2. We assign res
         res = tuple(params_list)
+
+    # 4. We return res
+    return res
+
+
+# ------------------------------------------
+# FUNCTION get_ghost_gaps
+# ------------------------------------------
+def get_ghost_gaps(vehicle, dates, gap_limit_seconds):
+    # 1. We create the output variable
+    res = []
+
+    # 2. We sort the dates. They all have the same "yyyy-mm-dd hh:mm:ss" format, so sorting the strings sorts them by time
+    dates = sorted(dates)
+
+    # 3. We compare each date with the next one
+    for start, end in zip(dates, dates[1:]):
+        gap_seconds = int((datetime.datetime.strptime(end, DATE_FORMAT) - datetime.datetime.strptime(start, DATE_FORMAT)).total_seconds())
+
+        # 3.1. It only counts as a ghost gap if it's strictly bigger than the limit (a gap of exactly gap_limit_seconds is fine)
+        #      edge case: two measurements with the same time give a gap of 0, so they're never reported
+        if gap_seconds > gap_limit_seconds:
+            res.append((vehicle, start, end, gap_seconds))
 
     # 4. We return res
     return res
@@ -93,50 +117,29 @@ def my_main(sc,
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # 2. Operation T1: 'map' to convert each line into a tuple of parameters
+    # 2. Operation T1: 'map' to turn each line into a tuple with the right types
     tupleRDD = inputRDD.map(process_line)
 
-    # 3. Operation T2: 'filter' to keep only the tuples with the specified bus_line_id and day_picked
-    filteredRDD = tupleRDD.filter(lambda x: x[BUS_LINE] == bus_line_id and x[DATE].startswith(day_picked))
+    # 3. Operation T2: 'filter' to keep only the measurements of bus_line_id on day_picked
+    #    the date always starts with "yyyy-mm-dd", so startswith is enough to check the day
+    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
+    filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and x[BUS_LINE] == bus_line_id and x[DATE].startswith(day_picked))
 
-    # 4. Operation T3: 'sortBy' to have consecutive records for the same vehicle
-    sortedRDD = filteredRDD.sortBy(lambda x: (x[VEHICLE], x[DATE]))
+    # 4. Operation T3: 'map' to (vehicle, date), that's all we need to find the gaps
+    vehicleRDD = filteredRDD.map(lambda x: (x[VEHICLE], x[DATE]))
 
-    PREVIOUS_DATE = AT_STOP + 1  # New column to store the previous date for each vehicle
-    GHOST_GAP = PREVIOUS_DATE + 1  # New column to indicate ghost gaps
+    # 5. Operation T4: 'groupByKey' to get all the dates of each vehicle together
+    #    we can't just sort the whole RDD and walk through it, because the measurements of one vehicle could end up split
+    #    across two partitions, and then we'd miss the gap right at the split. grouping makes sure each vehicle is in one place
+    groupedRDD = vehicleRDD.groupByKey()
 
-    # 5. Operation T4: 'map' to calculate the time difference between consecutive records for the same vehicle
-    def calculate_time_diff(records):
-        """
-        :param records:
-        :return: records with the additional information of the previous date and the time difference between consecutive records for the same vehicle
-        """
-        previous_record = None
-        for record in records:
-            # when looping through all records we can't assume that the previous record is from the same vehicle, so we need to check if the vehicle has changed
-            if previous_record is not None and record[VEHICLE] != previous_record[VEHICLE]:
-                previous_record = None
+    # 6. Operation T5: 'flatMap' to sort each vehicle's dates and turn every gap bigger than gap_limit_seconds into a (vehicle, start, end, seconds) item
+    #    edge case: a vehicle with a single measurement has no pairs, so it gives no gaps and doesn't show up
+    gapRDD = groupedRDD.flatMap(lambda x: get_ghost_gaps(x[0], x[1], gap_limit_seconds))
 
-            if previous_record is not None:
-                previous_date = datetime.datetime.strptime(previous_record[DATE], "%Y-%m-%d %H:%M:%S")
-                current_date = datetime.datetime.strptime(record[DATE], "%Y-%m-%d %H:%M:%S")
-                time_diff = int((current_date - previous_date).total_seconds())
-                yield record + (previous_record[DATE], time_diff)
-            else:
-                yield record + (None, 0)  # For the first record of each vehicle, we set the previous date to None and time difference to 0
-            previous_record = record
-
-
-    infoRDD = sortedRDD.mapPartitions(calculate_time_diff)
-
-    # 6. Operation T5: 'filter' to keep only the records where the time difference exceeds the gap_limit_seconds
-    ghost_gapRDD = infoRDD.filter(lambda x: x[GHOST_GAP] > gap_limit_seconds)
-
-    # 7. Operation T6: 'sortBy' to sort the final RDD by the starting time of the ghost gap
-    solutionRDD = ghost_gapRDD.sortBy(lambda x: x[PREVIOUS_DATE])
-
-    # 8. Operation T7: 'map' to format the output as (Bus_Line, Vehicle, Previous_Date, Current_Date, Time_Difference)
-    solutionRDD = solutionRDD.map(lambda x: (x[VEHICLE], x[PREVIOUS_DATE], x[DATE], x[GHOST_GAP]))
+    # 7. Operation T6: 'sortBy' gap start time
+    #    edge case: if two gaps start at the exact same time we use the vehicle as a tie breaker, so the output is always in the same order
+    solutionRDD = gapRDD.sortBy(lambda x: (x[1], x[0]))
 
     # ---------------------------------------
 

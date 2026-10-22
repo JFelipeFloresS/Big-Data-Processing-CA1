@@ -23,8 +23,6 @@
 import pyspark
 import pyspark.sql.functions
 import sys
-from pyspark.sql.functions import col, lag, unix_timestamp
-from pyspark.sql import Window
 
 # ------------------------------------------
 # CONSTANTS
@@ -40,6 +38,11 @@ VEHICLE_ID = "vehicleID" # pyspark.sql.types.IntegerType
 CLOSER_STOP_ID = "closerStopID" # pyspark.sql.types.IntegerType
 AT_STOP = "atStop" # pyspark.sql.types.IntegerType
 
+# new columns we create along the way
+GAP_START = "gapStart" # pyspark.sql.types.StringType
+GAP_END = "gapEnd" # pyspark.sql.types.StringType
+GAP_SECONDS = "gapSeconds" # pyspark.sql.types.LongType
+
 # ------------------------------------------
 # FUNCTION my_main
 # ------------------------------------------
@@ -52,16 +55,16 @@ def my_main(spark,
 
     # 1. We define the Schema of our DF.
     my_schema = pyspark.sql.types.StructType(
-        [pyspark.sql.types.StructField(DATE, pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField(BUS_LINE_ID, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(BUS_LINE_PATTERN_ID, pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField(CONGESTION, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(LONGITUDE, pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField(LATITUDE, pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField(DELAY, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(VEHICLE_ID, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(CLOSER_STOP_ID, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(AT_STOP, pyspark.sql.types.IntegerType(), False)
+        [pyspark.sql.types.StructField("date", pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField("busLineID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("busLinePatternID", pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField("congestion", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("longitude", pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField("latitude", pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField("delay", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("vehicleID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("closerStopID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("atStop", pyspark.sql.types.IntegerType(), False)
          ])
 
     # 2. Operation C1: 'read'
@@ -72,28 +75,32 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # 3. Operation T1: 'filter' only the tuples with the specified bus_line_id and day_picked
+    # 3. Operation T1: 'filter' to keep only the rows of bus_line_id on day_picked
+    #    the date always starts with "yyyy-mm-dd", so startswith is enough to check the day
     filteredDF = inputDF.filter((inputDF[BUS_LINE_ID] == bus_line_id) & (inputDF[DATE].startswith(day_picked)))
 
-    GAP_START = "gapStart" # pyspark.sql.types.StringType
-    GAP_END = "gapEnd" # pyspark.sql.types.StringType
-    GAP_SECONDS = "gapSeconds"
+    # 4. Operation T2: 'withColumn' + 'lag' over a window per vehicle (sorted by date) to bring the previous date of the same vehicle into each row
+    #    the window keeps each vehicle separate, so we never compare dates of two different buses
+    #    edge case: the first row of each vehicle has no previous date, so lag gives null there
+    vehicleWindow = pyspark.sql.Window.partitionBy(VEHICLE_ID).orderBy(DATE)
+    lagDF = filteredDF.withColumn(GAP_START, pyspark.sql.functions.lag(DATE).over(vehicleWindow)) \
+                      .withColumnRenamed(DATE, GAP_END)
 
-    # 4. Operation T3: 'window' to calculate the time difference between consecutive records for the same vehicle
-    windowSpec = Window.partitionBy(VEHICLE_ID).orderBy(DATE)
-    withLagDF = filteredDF.withColumn(GAP_START, lag(DATE).over(windowSpec)) \
-                        .withColumn(GAP_END, col(DATE)) \
-                        .withColumn(GAP_SECONDS,
-                                    (unix_timestamp(DATE) - unix_timestamp(lag(DATE).over(windowSpec))))
+    # 5. Operation T3: 'withColumn' to work out the gap in seconds between the previous date and this one
+    #    edge case: when the start is null (first row of a vehicle) the gap is null too
+    gapDF = lagDF.withColumn(GAP_SECONDS,
+                             pyspark.sql.functions.unix_timestamp(lagDF[GAP_END]) - pyspark.sql.functions.unix_timestamp(lagDF[GAP_START]))
 
-    # 5. Operation T4: 'filter' to keep only the gaps that exceed the gap_limit_seconds
-    gapDF = withLagDF.filter((withLagDF[GAP_SECONDS] > gap_limit_seconds))
+    # 6. Operation T4: 'filter' to keep only the gaps strictly bigger than gap_limit_seconds (a gap of exactly the limit is fine)
+    #    null > x is never true, so the first row of each vehicle gets dropped here too
+    ghostDF = gapDF.filter(gapDF[GAP_SECONDS] > gap_limit_seconds)
 
-    # 6. Operation T5: 'select' to keep only the relevant columns
-    solutionDF = gapDF.select(VEHICLE_ID, GAP_START, GAP_END, GAP_SECONDS)
+    # 7. Operation T5: 'select' to keep only the (vehicle, start, end, seconds) columns
+    selectedDF = ghostDF.select(VEHICLE_ID, GAP_START, GAP_END, GAP_SECONDS)
 
-    # 7. Operation T6: 'sort' to have the final result sorted by gapStart
-    solutionDF = solutionDF.sort(GAP_START)
+    # 8. Operation T6: 'orderBy' gap start time
+    #    edge case: if two gaps start at the exact same time we use the vehicle as a tie breaker, so the output is always in the same order
+    solutionDF = selectedDF.orderBy(GAP_START, VEHICLE_ID)
 
     # ---------------------------------------
 

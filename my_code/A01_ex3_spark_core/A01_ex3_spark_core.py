@@ -61,14 +61,14 @@ def process_line(line):
     # 3. If the list contains the right amount of parameters
     if (len(params_list) == 10):
         # 3.1. We set the right type for the parameters
-        params_list[BUS_LINE] = int(params_list[BUS_LINE])
-        params_list[CONGESTION] = int(params_list[CONGESTION])
-        params_list[LONGITUDE] = float(params_list[LONGITUDE])
-        params_list[LATITUDE] = float(params_list[LATITUDE])
-        params_list[DELAY] = int(params_list[DELAY])
-        params_list[VEHICLE] = int(params_list[VEHICLE])
-        params_list[CLOSER_STOP] = int(params_list[CLOSER_STOP])
-        params_list[AT_STOP] = int(params_list[AT_STOP])
+        params_list[1] = int(params_list[1])
+        params_list[3] = int(params_list[3])
+        params_list[4] = float(params_list[4])
+        params_list[5] = float(params_list[5])
+        params_list[6] = int(params_list[6])
+        params_list[7] = int(params_list[7])
+        params_list[8] = int(params_list[8])
+        params_list[9] = int(params_list[9])
 
         # 3.2. We assign res
         res = tuple(params_list)
@@ -99,11 +99,12 @@ def my_main(sc,
     #                  component [0] contains the triple (Bus_Line, Vehicle, Delay) of the measurement with the maximum Delay registered in the entire dataset.
     #                  component [1] contains the triple (Bus_Line, Vehicle, Delay) of the measurement with the minimum Delay registered in the entire dataset.
     reducedRDD = infoRDD.reduceByKey(lambda x, y: (
-                                        x[0] if x[0][2] >= y[0][2] else y[0],
-                                        x[1] if x[1][2] <= y[1][2] else y[1]
-                                     ))
+        x[0] if x[0][2] >= y[0][2] else y[0],
+        x[1] if x[1][2] <= y[1][2] else y[1]))
 
-    # 5. Operation T4: We apply 'flatMap' to produce a new RDD (e.g., solutionRDD) where we simply remove the unique key used beforehand, and turn each of the 2 components of its associated value into an item of its own. The item with the maximum Delay must come first, and the item with the minimum Delay second.
+    # 5. Operation T4: We apply 'flatMap' to produce a new RDD (e.g., solutionRDD) where we simply remove the unique key used beforehand,
+    # and turn each of the 2 components of its associated value into an item of its own.
+    # The item with the maximum Delay must come first, and the item with the minimum Delay second.
     solutionRDD = reducedRDD.flatMap(lambda x: [x[1][0], x[1][1]])
 
     # 6. Operation A1: We apply 'collect' to collect the items with the result.

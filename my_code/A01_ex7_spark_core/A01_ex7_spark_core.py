@@ -23,7 +23,6 @@
 import pyspark
 import sys
 import math
-import time
 import datetime
 
 
@@ -40,6 +39,9 @@ DELAY = 6 # (06) Delay => Delay of the bus in seconds (negative if ahead of sche
 VEHICLE = 7 # (07) Vehicle => An identifier for the bus vehicle. Int (e.g., 33304)
 CLOSER_STOP = 8 # (08) Closer_Stop => An idenfifier for the closest bus stop given the current bus position. Int (e.g., 7486). It can be no bus stop, in which case it takes value -1 (e.g., -1).
 AT_STOP = 9 # (09) At_Stop => On whether the bus is currently at the bus stop (No -> 0 and Yes -> 1). Int (e.g., 0).
+
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+EARTH_RADIUS_KM = 6371.0
 
 # ------------------------------------------
 # FUNCTION process_line
@@ -65,20 +67,77 @@ def process_line(line):
     # 3. If the list contains the right amount of parameters
     if (len(params_list) == 10):
         # 3.1. We set the right type for the parameters
-        params_list[BUS_LINE] = int(params_list[BUS_LINE])
-        params_list[CONGESTION] = int(params_list[CONGESTION])
-        params_list[LONGITUDE] = float(params_list[LONGITUDE])
-        params_list[LATITUDE] = float(params_list[LATITUDE])
-        params_list[DELAY] = int(params_list[DELAY])
-        params_list[VEHICLE] = int(params_list[VEHICLE])
-        params_list[CLOSER_STOP] = int(params_list[CLOSER_STOP])
-        params_list[AT_STOP] = int(params_list[AT_STOP])
+        params_list[1] = int(params_list[1])
+        params_list[3] = int(params_list[3])
+        params_list[4] = float(params_list[4])
+        params_list[5] = float(params_list[5])
+        params_list[6] = int(params_list[6])
+        params_list[7] = int(params_list[7])
+        params_list[8] = int(params_list[8])
+        params_list[9] = int(params_list[9])
 
         # 3.2. We assign res
         res = tuple(params_list)
 
     # 4. We return res
     return res
+
+
+# ------------------------------------------
+# FUNCTION haversine_km
+# ------------------------------------------
+def haversine_km(lat1, lon1, lat2, lon2):
+    # 1. We convert the degrees to radians
+    lat1 = math.radians(lat1)
+    lon1 = math.radians(lon1)
+    lat2 = math.radians(lat2)
+    lon2 = math.radians(lon2)
+
+    # 2. Haversine formula: h = sin^2((lat2 - lat1) / 2) + cos(lat1) * cos(lat2) * sin^2((lon2 - lon1) / 2)
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+
+    # 3. We turn h into the angle between the 2 points (2 * arcsin(sqrt(h))) and multiply it by the radius of the earth
+    #    edge case: h can go a tiny bit over 1 because of rounding, which would crash asin, so we cap it at 1
+    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(min(1.0, h)))
+
+
+# ------------------------------------------
+# FUNCTION get_average_speed
+# ------------------------------------------
+def get_average_speed(vehicle, measurements, max_speed_accepted):
+    # 1. We create the output variable
+    res = []
+
+    # 2. We sort the measurements by date. They all have the same "yyyy-mm-dd hh:mm:ss" format, so sorting the strings sorts them by time
+    measurements = sorted(measurements)
+
+    # 3. We work out the speed of each pair of consecutive measurements
+    speeds_kmh = []
+    for (date1, lat1, lon1), (date2, lat2, lon2) in zip(measurements, measurements[1:]):
+        seconds = (datetime.datetime.strptime(date2, DATE_FORMAT) - datetime.datetime.strptime(date1, DATE_FORMAT)).total_seconds()
+
+        # 3.1. edge case: two measurements with the same time would mean dividing by 0, so we can't get a speed out of them and we skip the pair
+        if seconds > 0:
+            speed_ms = haversine_km(lat1, lon1, lat2, lon2) * 1000 / seconds
+
+            # 3.2. If the speed is above max_speed_accepted (m/s) it's GPS noise, so we skip the pair. A speed of exactly the max is still fine
+            if speed_ms <= max_speed_accepted:
+                speeds_kmh.append(speed_ms * 3.6)
+
+    # 4. If the vehicle has at least one valid pair we return its average speed
+    if len(speeds_kmh) > 0:
+        res.append((vehicle, sum(speeds_kmh) / len(speeds_kmh)))
+
+    # 5. We return res
+    return res
+
+
+# ------------------------------------------
+# FUNCTION get_bucket_range
+# ------------------------------------------
+def get_bucket_range(bucket_id, bucket_size_kmh):
+    # we use (i+1) * size for the end (instead of start + size) so it matches the [i * size, (i+1) * size) definition exactly
+    return str(bucket_id * bucket_size_kmh) + "_" + str((bucket_id + 1) * bucket_size_kmh)
 
 
 # ------------------------------------------
@@ -91,81 +150,41 @@ def my_main(sc,
             day_picked
            ):
 
-    # convert max speed accepted from m/s to km/h
-    max_speed_accepted = max_speed_accepted * 3.6
-
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # 2. Operation T1: 'map' + 'process_line'
+    # 2. Operation T1: 'map' to turn each line into a tuple with the right types
     tupleRDD = inputRDD.map(process_line)
 
-    # 3. Operation T2: 'filter' + 'lambda' selecting only the lines with the right day
-    filteredRDD = tupleRDD.filter(lambda x: x[DATE].startswith(day_picked))
+    # 3. Operation T2: 'filter' to keep only the measurements of day_picked
+    #    the date always starts with "yyyy-mm-dd", so startswith is enough to check the day
+    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
+    filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and x[DATE].startswith(day_picked))
 
-    DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-    EARTH_RADIUS = 6371.0
+    # 4. Operation T3: 'map' to (vehicle, (date, latitude, longitude)), that's all we need to work out the speeds
+    vehicleRDD = filteredRDD.map(lambda x: (x[VEHICLE], (x[DATE], x[LATITUDE], x[LONGITUDE])))
 
-    def hav(theta):
-        return math.sin(theta / 2) ** 2
+    # 5. Operation T4: 'groupByKey' to get all the measurements of each vehicle together
+    #    we need them in one place so we can sort them by time and compare each one with the next
+    groupedRDD = vehicleRDD.groupByKey()
 
-    def calculate_central_angle(lat1, lon1, lat2, lon2):
-        # Convert degrees to radians
-        lat1_rad = math.radians(lat1)
-        lon1_rad = math.radians(lon1)
-        lat2_rad = math.radians(lat2)
-        lon2_rad = math.radians(lon2)
+    # 6. Operation T5: 'flatMap' to get the average speed (km/h) of each vehicle using only its valid pairs
+    #    edge case: a vehicle with no valid pairs (only one measurement, or all its pairs were GPS noise) gives nothing back, so it gets dropped
+    avgSpeedRDD = groupedRDD.flatMap(lambda x: get_average_speed(x[0], x[1], max_speed_accepted))
 
-        # Haversine formula: hav(central_angle) = hav(lat2 - lat1) + (cos(lat1) * cos(lat2) * hav(lon2 - lon1))
-        h = hav(lat2_rad - lat1_rad) + (math.cos(lat1_rad) * math.cos(lat2_rad) * hav(lon2_rad - lon1_rad))
-        # invert the haversine to get the central angle: central_angle = 2 * arcsin(sqrt(h))
-        return 2 * math.asin(math.sqrt(h))
+    # 7. Operation T6: 'map' to (bucket id, 1)
+    #    bucket i covers [i * bucket_size_kmh, (i+1) * bucket_size_kmh), so an average of exactly 10.0 with size 5.0 goes in bucket 2, not 1
+    bucketRDD = avgSpeedRDD.map(lambda x: (int(math.floor(x[1] / bucket_size_kmh)), 1))
 
-    # 5. Operation T4: 'map' + 'lambda' to compute the distance travelled from last measurement and the speed in km/h, and then bucketize the speed
-    def calculate_speeds_for_vehicle(record):
-        vehicle, records = record
-        records = sorted(records, key=lambda x: x[DATE])
+    # 8. Operation T7: 'reduceByKey' to count the vehicles in each bucket
+    #    edge case: empty buckets never get a key, so they don't show up in the result (which is what we want)
+    countRDD = bucketRDD.reduceByKey(lambda a, b: a + b)
 
-        # compare each record with the previous one to calculate distance and speed for each vehicle
-        for prev, curr in zip(records, records[1:]):
-            # We calculate the distance using the Haversine formula
-            # formula: distance = radius_of_earth * central_angle_between_two_points
-            # hav(central_angle) = sin^2(central_angle / 2)
-            # central_angle = 2 * arcsin(sqrt(hav(lat2 - lat1) + (cos(lat1) * cos(lat2) * hav(lon2 - lon1))))
-            r = EARTH_RADIUS # Radius of earth in kilometers
-            central_angle = calculate_central_angle(prev[LATITUDE], prev[LONGITUDE], curr[LATITUDE], curr[LONGITUDE])
-            distance = central_angle * r
+    # 9. Operation T8: 'sortByKey' to sort by bucket id
+    sortedRDD = countRDD.sortByKey()
 
-            # We calculate the time difference in hours
-            time_diff = (datetime.datetime.strptime(curr[DATE], DATE_FORMAT) - datetime.datetime.strptime(prev[DATE], DATE_FORMAT)).total_seconds() / 3600.0
-
-            # We calculate the speed in km/h
-            if time_diff > 0:
-                yield vehicle, distance / time_diff
-
-    vehicleRDD = filteredRDD.map(lambda x: (x[VEHICLE], x)).groupByKey()
-
-    filtered_speed_RDD = vehicleRDD.flatMap(calculate_speeds_for_vehicle)
-
-    valid_speed_RDD = filtered_speed_RDD.filter(lambda x: x[1] <= max_speed_accepted)
-
-    def get_speed_bucket_id(speed):
-        return math.floor(speed / bucket_size_kmh)
-
-    def get_speed_bucket(bucket_id):
-        bucket_start = bucket_id * bucket_size_kmh
-        bucket_end = bucket_start + bucket_size_kmh
-        return f"{bucket_start}_{bucket_end}"
-
-    average_speed_RDD = valid_speed_RDD.groupByKey().mapValues(lambda speeds: sum(speeds) / len(speeds))
-
-    bucket_count_RDD = (average_speed_RDD
-                        .map(lambda x: (get_speed_bucket_id(x[1]), 1))
-                        .reduceByKey(lambda a, b: a + b))
-
-    solutionRDD = (bucket_count_RDD
-                   .sortByKey()
-                   .map(lambda x: (x[0], get_speed_bucket(x[0]), x[1])))
+    # 10. Operation T9: 'map' to get the (bucket id, "lo_hi", vehicles) format
+    solutionRDD = sortedRDD.map(lambda x: (x[0], get_bucket_range(x[0], bucket_size_kmh), x[1]))
 
     # ---------------------------------------
 

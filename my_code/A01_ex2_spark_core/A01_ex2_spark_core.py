@@ -61,14 +61,14 @@ def process_line(line):
     # 3. If the list contains the right amount of parameters
     if (len(params_list) == 10):
         # 3.1. We set the right type for the parameters
-        params_list[BUS_LINE] = int(params_list[BUS_LINE])
-        params_list[CONGESTION] = int(params_list[CONGESTION])
-        params_list[LONGITUDE] = float(params_list[LONGITUDE])
-        params_list[LATITUDE] = float(params_list[LATITUDE])
-        params_list[DELAY] = int(params_list[DELAY])
-        params_list[VEHICLE] = int(params_list[VEHICLE])
-        params_list[CLOSER_STOP] = int(params_list[CLOSER_STOP])
-        params_list[AT_STOP] = int(params_list[AT_STOP])
+        params_list[1] = int(params_list[1])
+        params_list[3] = int(params_list[3])
+        params_list[4] = float(params_list[4])
+        params_list[5] = float(params_list[5])
+        params_list[6] = int(params_list[6])
+        params_list[7] = int(params_list[7])
+        params_list[8] = int(params_list[8])
+        params_list[9] = int(params_list[9])
 
         # 3.2. We assign res
         res = tuple(params_list)
@@ -91,8 +91,10 @@ def my_main(sc,
     # 2. Operation T1: We apply 'map' to produce a new RDD (e.g., formattedRDD) where each item of the original inputRDD is displayed as a tuple
     formattedRDD = inputRDD.map(process_line)
 
-    # 3. Operation T2: We apply 'filter' to produce a new RDD (e.g., filteredRDD) containing only the items of the bus line 'bus_line_id' (field "Bus_Line") whose field "Bus_Line_Pattern" is not the empty string "". Measurements of other lines, or with an empty pattern, must be discarded.
-    filteredRDD = formattedRDD.filter(lambda x: x[BUS_LINE] == bus_line_id and x[BUS_LINE_PATTERN] != "")
+    # 3. Operation T2: We apply 'filter' to produce a new RDD (e.g., filteredRDD) containing only the items of the bus line 'bus_line_id' (field "Bus_Line")
+    # whose field "Bus_Line_Pattern" is not the empty string "".
+    # Measurements of other lines, or with an empty pattern, must be discarded.
+    filteredRDD = formattedRDD.filter(lambda x: len(x) == 10 and x[BUS_LINE] == bus_line_id and x[BUS_LINE_PATTERN] != "")
 
     # 4. Operation T3: We apply 'map' to produce a new RDD (e.g., infoRDD) keeping only the field "Bus_Line_Pattern" from filteredRDD.
     infoRDD = filteredRDD.map(lambda x: x[BUS_LINE_PATTERN])

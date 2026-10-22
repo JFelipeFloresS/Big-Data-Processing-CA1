@@ -23,7 +23,7 @@
 import pyspark
 import pyspark.sql.functions
 import sys
-from pyspark.sql.functions import col, unix_timestamp, array_sort
+import datetime
 
 # ------------------------------------------
 # CONSTANTS
@@ -39,6 +39,13 @@ VEHICLE_ID = "vehicleID" # pyspark.sql.types.IntegerType
 CLOSER_STOP_ID = "closerStopID" # pyspark.sql.types.IntegerType
 AT_STOP = "atStop" # pyspark.sql.types.IntegerType
 
+# new columns we create along the way
+STOPS = "stops" # pyspark.sql.types.ArrayType(IntegerType)
+NUM_STOPS = "numStops" # pyspark.sql.types.IntegerType
+MAX_STOPS = "maxStops" # pyspark.sql.types.IntegerType
+
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 # ------------------------------------------
 # FUNCTION my_main
 # ------------------------------------------
@@ -50,16 +57,16 @@ def my_main(spark,
 
     # 1. We define the Schema of our DF.
     my_schema = pyspark.sql.types.StructType(
-        [pyspark.sql.types.StructField(DATE, pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField(BUS_LINE_ID, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(BUS_LINE_PATTERN_ID, pyspark.sql.types.StringType(), False),
-         pyspark.sql.types.StructField(CONGESTION, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(LONGITUDE, pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField(LATITUDE, pyspark.sql.types.FloatType(), False),
-         pyspark.sql.types.StructField(DELAY, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(VEHICLE_ID, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(CLOSER_STOP_ID, pyspark.sql.types.IntegerType(), False),
-         pyspark.sql.types.StructField(AT_STOP, pyspark.sql.types.IntegerType(), False)
+        [pyspark.sql.types.StructField("date", pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField("busLineID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("busLinePatternID", pyspark.sql.types.StringType(), False),
+         pyspark.sql.types.StructField("congestion", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("longitude", pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField("latitude", pyspark.sql.types.FloatType(), False),
+         pyspark.sql.types.StructField("delay", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("vehicleID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("closerStopID", pyspark.sql.types.IntegerType(), False),
+         pyspark.sql.types.StructField("atStop", pyspark.sql.types.IntegerType(), False)
          ])
 
     # 2. Operation C1: 'read'
@@ -70,28 +77,37 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # 3. Operation T1: 'filter' AT_STOP = 1 and  current time within the horizon
-    current_time_ts = unix_timestamp(pyspark.sql.functions.lit(current_time), "yyyy-MM-dd HH:mm:ss")
-    end_time_ts = current_time_ts + seconds_horizon
-    filteredDF = inputDF.filter((col(AT_STOP) == 1) &
-                                (unix_timestamp(col(DATE), "yyyy-MM-dd HH:mm:ss") >= current_time_ts) &
-                                (unix_timestamp(col(DATE), "yyyy-MM-dd HH:mm:ss") <= end_time_ts))
+    # 3. Operation T1: 'filter' to keep only the rows where the bus is stopped (atStop == 1) inside the time window
+    #    the window is [start, end), so a row at exactly the end time doesn't count
+    #    we work out the end time once here instead of for every row. The dates all have the same "yyyy-mm-dd hh:mm:ss" format,
+    #    so we can compare them as plain strings and skip parsing every row
+    #    edge case: the window can cross midnight (e.g. 23:50 + 1800 seconds), timedelta takes care of moving to the next day
+    end_time = (datetime.datetime.strptime(current_time, DATE_FORMAT) + datetime.timedelta(seconds=seconds_horizon)).strftime(DATE_FORMAT)
+    filteredDF = inputDF.filter((inputDF[AT_STOP] == 1) &
+                                (inputDF[DATE] >= current_time) &
+                                (inputDF[DATE] < end_time))
 
-    # new constant column name for unique bus stops
-    UNIQUE_BUS_STOPS = "stops"
+    # 4. Operation T2: 'groupBy' bus line + 'agg' to get the sorted list of different stops of each line
+    #    collect_set already gets rid of repeated stops, so a line stopping twice at the same stop only counts it once
+    stopsDF = filteredDF.groupBy(BUS_LINE_ID) \
+                        .agg(pyspark.sql.functions.array_sort(pyspark.sql.functions.collect_set(CLOSER_STOP_ID)).alias(STOPS))
 
-    # 4. Operation T2: 'groupBy' bus line and aggregate unique bus stops
-    grouppedDF = filteredDF.groupBy(BUS_LINE_ID).agg(pyspark.sql.functions.collect_set(CLOSER_STOP_ID).alias(UNIQUE_BUS_STOPS))
+    # 5. Operation T3: 'withColumn' to add how many stops each line has
+    sizeDF = stopsDF.withColumn(NUM_STOPS, pyspark.sql.functions.size(stopsDF[STOPS]))
 
-    # 5. Operation T3: 'sort' by number of unique bus stops (descending) and then by bus line id (ascending)
-    sortedDF = grouppedDF.orderBy(pyspark.sql.functions.size(col(UNIQUE_BUS_STOPS)).desc(), col(BUS_LINE_ID).asc())
+    # 6. Operation T4: 'agg' to get the max number of stops of any line (a DF with a single row)
+    maxDF = sizeDF.agg(pyspark.sql.functions.max(NUM_STOPS).alias(MAX_STOPS))
 
-    # 6. Operation T4: 'filter' to keep only bus lines with the max number of unique bus stops
-    max_unique_stops = sortedDF.select(pyspark.sql.functions.size(col(UNIQUE_BUS_STOPS)).alias("num_unique_stops")).agg(pyspark.sql.functions.max("num_unique_stops")).collect()[0][0]
-    solutionDF = sortedDF.filter(pyspark.sql.functions.size(col(UNIQUE_BUS_STOPS)) == max_unique_stops)
+    # 7. Operation T5: 'join' to keep only the line(s) whose number of stops is that max
+    #    doing it with a join keeps it all inside Spark, so we don't need an extra action to get the max first
+    #    edge case: if two or more lines tie on the max they all match the join, so we keep all of them
+    bestDF = sizeDF.join(maxDF, sizeDF[NUM_STOPS] == maxDF[MAX_STOPS])
 
-    # 7. Operation T5: 'sort' the bus stops for each bus line
-    solutionDF = solutionDF.withColumn("sorted_unique_bus_stops", pyspark.sql.functions.array_sort(col(UNIQUE_BUS_STOPS))).drop(UNIQUE_BUS_STOPS).withColumnRenamed("sorted_unique_bus_stops", UNIQUE_BUS_STOPS)
+    # 8. Operation T6: 'select' to keep only the (line, stops) columns
+    selectedDF = bestDF.select(BUS_LINE_ID, STOPS)
+
+    # 9. Operation T7: 'orderBy' bus line, so ties come out in increasing order
+    solutionDF = selectedDF.orderBy(BUS_LINE_ID)
 
     # ---------------------------------------
 

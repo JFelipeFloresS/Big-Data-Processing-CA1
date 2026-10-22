@@ -22,7 +22,6 @@
 # ------------------------------------------
 import pyspark
 import sys
-import time
 import datetime
 
 
@@ -39,6 +38,8 @@ DELAY = 6 # (06) Delay => Delay of the bus in seconds (negative if ahead of sche
 VEHICLE = 7 # (07) Vehicle => An identifier for the bus vehicle. Int (e.g., 33304)
 CLOSER_STOP = 8 # (08) Closer_Stop => An idenfifier for the closest bus stop given the current bus position. Int (e.g., 7486). It can be no bus stop, in which case it takes value -1 (e.g., -1).
 AT_STOP = 9 # (09) At_Stop => On whether the bus is currently at the bus stop (No -> 0 and Yes -> 1). Int (e.g., 0).
+
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # ------------------------------------------
 # FUNCTION process_line
@@ -64,20 +65,39 @@ def process_line(line):
     # 3. If the list contains the right amount of parameters
     if (len(params_list) == 10):
         # 3.1. We set the right type for the parameters
-        params_list[BUS_LINE] = int(params_list[BUS_LINE])
-        params_list[CONGESTION] = int(params_list[CONGESTION])
-        params_list[LONGITUDE] = float(params_list[LONGITUDE])
-        params_list[LATITUDE] = float(params_list[LATITUDE])
-        params_list[DELAY] = int(params_list[DELAY])
-        params_list[VEHICLE] = int(params_list[VEHICLE])
-        params_list[CLOSER_STOP] = int(params_list[CLOSER_STOP])
-        params_list[AT_STOP] = int(params_list[AT_STOP])
+        params_list[1] = int(params_list[1])
+        params_list[3] = int(params_list[3])
+        params_list[4] = float(params_list[4])
+        params_list[5] = float(params_list[5])
+        params_list[6] = int(params_list[6])
+        params_list[7] = int(params_list[7])
+        params_list[8] = int(params_list[8])
+        params_list[9] = int(params_list[9])
 
         # 3.2. We assign res
         res = tuple(params_list)
 
     # 4. We return res
     return res
+
+
+# ------------------------------------------
+# FUNCTION keep_most_stops
+# ------------------------------------------
+def keep_most_stops(a, b):
+    # a and b are lists of (bus line, stops). Inside each list all lines have the same number of stops,
+    # so we only need to look at the first one of each to compare them
+    a_size = len(a[0][1])
+    b_size = len(b[0][1])
+
+    # 1. If one side has more stops it wins
+    if a_size > b_size:
+        return a
+    if b_size > a_size:
+        return b
+
+    # 2. If it's a tie we keep both
+    return a + b
 
 
 # ------------------------------------------
@@ -92,44 +112,39 @@ def my_main(sc,
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # 2. Operation C2: 'map'
+    # 2. Operation T1: 'map' to turn each line into a tuple with the right types
     tupleRDD = inputRDD.map(process_line)
 
-    # 3. Operation C3: 'filter' only the records that are within the time horizon with AT_STOP = 1
-    # We convert the current_time to a datetime object
-    current_time_dt = datetime.datetime.strptime(current_time, "%Y-%m-%d %H:%M:%S")
-    # We calculate the end time of the horizon
-    end_time_dt = current_time_dt + datetime.timedelta(seconds=seconds_horizon)
+    # 3. Operation T2: 'filter' to keep only the measurements where the bus is stopped (At_Stop == 1) inside the time window
+    #    the window is [start, end), so a measurement at exactly the end time doesn't count
+    #    we work out the end time once here instead of for every row. The dates all have the same "yyyy-mm-dd hh:mm:ss" format,
+    #    so we can compare them as plain strings and skip parsing every row
+    #    edge case: the window can cross midnight (e.g. 23:50 + 1800 seconds), timedelta takes care of moving to the next day
+    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
+    end_time = (datetime.datetime.strptime(current_time, DATE_FORMAT) + datetime.timedelta(seconds=seconds_horizon)).strftime(DATE_FORMAT)
+    filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and x[AT_STOP] == 1 and current_time <= x[DATE] < end_time)
 
-    # We define a function to filter the records
-    def filter_records(record):
-        # We convert the record's date to a datetime object
-        record_time_dt = datetime.datetime.strptime(record[DATE], "%Y-%m-%d %H:%M:%S")
-        # We check if the record is within the time horizon and AT_STOP = 1
-        return current_time_dt <= record_time_dt <= end_time_dt and record[AT_STOP] == 1
-
-    # We apply the filter to the RDD
-    filteredRDD = tupleRDD.filter(filter_records)
-
-    # 4. Operation C4: reduce by key to get the list of unique bust stops per bus line
-    # We create a pair RDD with bus line as key and the closer stop as value
+    # 4. Operation T3: 'map' to (bus line, stop)
     pairRDD = filteredRDD.map(lambda x: (x[BUS_LINE], x[CLOSER_STOP]))
 
-    # We reduce by key to get the list of unique bus stops per bus line and then count the number of unique bus stops
-    reducedRDD = (pairRDD
-                  .distinct()  # Get unique (bus line, closer stop) pairs
-                  .mapValues(lambda x: [x])  # Convert each closer stop to a list
-                  .reduceByKey(lambda a, b: a + b) # Combine lists of closer stops for each bus line
-                  .mapValues(lambda x: sorted(x)))  # sort the list of unique bus stops for each bus line
+    # 5. Operation T4: 'distinct' so a line stopping more than once at the same stop only counts it once
+    distinctRDD = pairRDD.distinct()
 
-    # 5. Operation C5: sort by key to have the most frequent bus lines first and then by bus line id in case of ties
-    sortedRDD = reducedRDD.sortBy(lambda x: (-len(x[1]), x[0]))  # Sort by number of unique bus stops (descending) and then by bus line id (ascending)
+    # 6. Operation T5: 'groupByKey' + 'mapValues' to get the sorted list of stops of each bus line
+    stopsRDD = distinctRDD.groupByKey().mapValues(lambda x: sorted(x))
 
-    # 6. Operation C6: 'filter' to keep only bus lines with the max number of unique bus stops
-    # We get the maximum number of unique bus stops
-    max_unique_stops = sortedRDD.map(lambda x: len(x[1])).max()
-    # We filter the RDD to keep only bus lines with the maximum number of unique bus stops
-    solutionRDD = sortedRDD.filter(lambda x: len(x[1]) == max_unique_stops)
+    # 7. Operation T6: 'map' to put every bus line under the same key ("ALL"), so we can find the max inside Spark without an extra action
+    allRDD = stopsRDD.map(lambda x: ("ALL", [x]))
+
+    # 8. Operation T7: 'reduceByKey' to keep only the bus line(s) with the most stops
+    #    edge case: if two or more lines tie on the max, keep_most_stops keeps all of them
+    bestRDD = allRDD.reduceByKey(keep_most_stops)
+
+    # 9. Operation T8: 'flatMap' to drop the "ALL" key and get one item per bus line
+    bestLinesRDD = bestRDD.flatMap(lambda x: x[1])
+
+    # 10. Operation T9: 'sortBy' bus line, so ties come out in increasing order
+    solutionRDD = bestLinesRDD.sortBy(lambda x: x[0])
 
     # ---------------------------------------
 

@@ -38,6 +38,8 @@ VEHICLE = 7 # (07) Vehicle => An identifier for the bus vehicle. Int (e.g., 3330
 CLOSER_STOP = 8 # (08) Closer_Stop => An idenfifier for the closest bus stop given the current bus position. Int (e.g., 7486). It can be no bus stop, in which case it takes value -1 (e.g., -1).
 AT_STOP = 9 # (09) At_Stop => On whether the bus is currently at the bus stop (No -> 0 and Yes -> 1). Int (e.g., 0).
 
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 # ------------------------------------------
 # FUNCTION process_line
 # ------------------------------------------
@@ -62,20 +64,45 @@ def process_line(line):
     # 3. If the list contains the right amount of parameters
     if (len(params_list) == 10):
         # 3.1. We set the right type for the parameters
-        params_list[BUS_LINE] = int(params_list[BUS_LINE])
-        params_list[CONGESTION] = int(params_list[CONGESTION])
-        params_list[LONGITUDE] = float(params_list[LONGITUDE])
-        params_list[LATITUDE] = float(params_list[LATITUDE])
-        params_list[DELAY] = int(params_list[DELAY])
-        params_list[VEHICLE] = int(params_list[VEHICLE])
-        params_list[CLOSER_STOP] = int(params_list[CLOSER_STOP])
-        params_list[AT_STOP] = int(params_list[AT_STOP])
+        params_list[1] = int(params_list[1])
+        params_list[3] = int(params_list[3])
+        params_list[4] = float(params_list[4])
+        params_list[5] = float(params_list[5])
+        params_list[6] = int(params_list[6])
+        params_list[7] = int(params_list[7])
+        params_list[8] = int(params_list[8])
+        params_list[9] = int(params_list[9])
 
         # 3.2. We assign res
         res = tuple(params_list)
 
     # 4. We return res
     return res
+
+
+# ------------------------------------------
+# FUNCTION get_hour
+# ------------------------------------------
+def get_hour(date):
+    # the date looks like "2013-01-05 08:10:00", so the hour is always characters 11 and 12 (e.g. "08")
+    return date[11:13]
+
+
+# ------------------------------------------
+# FUNCTION is_weekend
+# ------------------------------------------
+def is_weekend(date):
+    # weekday() gives 0 for monday up to 6 for sunday, so 5 and 6 are saturday and sunday
+    return datetime.datetime.strptime(date, DATE_FORMAT).weekday() in [5, 6]
+
+
+# ------------------------------------------
+# FUNCTION is_on_schedule
+# ------------------------------------------
+def is_on_schedule(delay, delay_limit):
+    # both ends count as on schedule (e.g. with a limit of 60, a delay of exactly 60 or -60 is still fine)
+    return (-1) * delay_limit <= delay <= delay_limit
+
 
 # ------------------------------------------
 # FUNCTION my_main
@@ -90,34 +117,31 @@ def my_main(sc,
     # 1. Operation C1: 'textFile'
     inputRDD = sc.textFile(my_dataset_dir)
 
-    # 2. Operation T1: 'map'
-    processedRDD = inputRDD.map(process_line)
+    # 2. Operation T1: 'map' to turn each line into a tuple with the right types
+    tupleRDD = inputRDD.map(process_line)
 
-    # 3. Operation T2: 'filter' to keep only the records that match the specified bus lines and hours only on saturday or sunday
-    filteredRDD = processedRDD.filter(lambda x: x[BUS_LINE] in line_list and
-                                      x[DATE].split()[1][:2] in hours_list and
-                                      datetime.datetime.strptime(x[DATE], "%Y-%m-%d %H:%M:%S").weekday() in [5, 6])
+    # 3. Operation T2: 'filter' to keep only the measurements of the lines we want, in the hours we want, on a saturday or sunday
+    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
+    filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and
+                                            x[BUS_LINE] in line_list and
+                                            get_hour(x[DATE]) in hours_list and
+                                            is_weekend(x[DATE]))
 
-    # 4. Operation T3: 'map' to create a new RDD with the percentage of buses on schedule for each bus line and hour
-    def is_bus_on_schedule(delay, delay_limit):
-        return (-1) * delay_limit <= delay <= delay_limit
+    # 4. Operation T3: 'map' to (bus line, (on schedule, 1)) so we can count both things in one go
+    #    on schedule is 1 if the delay is within [-delay_limit, delay_limit] (both ends included) and 0 otherwise
+    countRDD = filteredRDD.map(lambda x: (x[BUS_LINE], (1 if is_on_schedule(x[DELAY], delay_limit) else 0, 1)))
 
-    def map_to_percentage(x):
-        on_schedule = 1 if is_bus_on_schedule(x[DELAY], delay_limit) else 0
-        return (x[BUS_LINE], (on_schedule, 1))
+    # 5. Operation T4: 'reduceByKey' to add up the on schedule and total counts per bus line
+    #    edge case: a line from line_list with no measurements never gets here, so it won't show up in the result (which is what we want)
+    reducedRDD = countRDD.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]))
 
-    mappedRDD = filteredRDD.map(map_to_percentage)
+    # 6. Operation T5: 'map' to work out the percentage and get the (line, percentage, total, on time) format
+    #    total is always at least 1 here, so no division by zero
+    formattedRDD = reducedRDD.map(lambda x: (x[0], round((x[1][0] / x[1][1]) * 100, 2), x[1][1], x[1][0]))
 
-    # 5. Operation T4: 'reduceByKey' to sum the on_schedule counts and total counts for each bus line and hour
-    reducedRDD = mappedRDD.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]))
-
-    # 6. Operation T6: 'map' to calculate the percentage of buses on schedule and format the output as (Bus_Line, Percentage on schedule, Total number o measurements of the bus line, Total number of measurement of the bus line)
-    def format_output(x):
-        bus_line, (on_schedule, total) = x
-        percentage = round((on_schedule / total) * 100, 2)
-        return (bus_line, percentage, total, on_schedule)
-
-    solutionRDD = reducedRDD.map(format_output)
+    # 7. Operation T6: 'sortBy' percentage (biggest first), and on a tie by bus line (smallest first)
+    #    we sort on the rounded percentage, as that's the value we actually print
+    solutionRDD = formattedRDD.sortBy(lambda x: (-x[1], x[0]))
 
     # ---------------------------------------
 
