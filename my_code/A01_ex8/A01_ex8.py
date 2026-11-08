@@ -11,10 +11,9 @@
 #
 # Use case: optimal stations to pick up and drop off a bike.
 # Take into account the time of day, the day of the week, and the average speed of a cyclist.
-# Display the 5 closest stations to the origin and destination along with the expected number of available bikes and docks at the time of arrival.
+# Display the 5 routes with the highest probability of having a bike available at the pick-up station and a dock available at the drop-off station, while also considering the total travel time.
 #
-# Technology: Spark DataFrames (see the report in my_report for the
-# justification).
+# Technology: Spark DataFrames (see the report in my_code for the justification).
 #
 # --------------------------------------------------------
 
@@ -154,7 +153,9 @@ def my_main(spark,
         .schema(my_schema) \
         .load(my_dataset_dir)
 
-    # 3. Operation A1: 'filter' all unique stations
+    # 3. Operation A1: 'groupBy' station ID +
+    # 'agg': 'max_by' then distance columns to origin and destination + walking times +
+    # 'withColumn' to calculate the distance from the leaving_from and destination coordinates using the haversine formula
     stationsDF = (inputDF
                     .groupBy(STATION_ID)
                     .agg(F.max_by(NAME, LAST_REPORTED).alias(NAME),
@@ -166,7 +167,9 @@ def my_main(spark,
                          .withColumn(WALKING_TIME_TO_PICK_UP, F.col(DISTANCE_ORIGIN) / (WALKING_SPEED_KMH / 60))
                          .withColumn(WALKING_TIME_TO_DESTINATION, F.col(DISTANCE_DESTINATION) / (WALKING_SPEED_KMH / 60)))
 
-    # 4. Operation A2: 'select' to keep only the relevant columns for the next steps
+    # 4. Operation A2: 'orderBy' distance of current station to the origin point +
+    # 'limit' the 5 closest stations (to origin for originDF and destination for destinationDF) +
+    # 'select' to keep only the top 5 rows with the relevant columns for the next steps
     originDF = (stationsDF
                 .orderBy(DISTANCE_ORIGIN)
                 .limit(5)
@@ -185,7 +188,13 @@ def my_main(spark,
                              F.col(LONGITUDE).alias(DROPOFF_LONGITUDE),
                              F.col(WALKING_TIME_TO_DESTINATION)))
 
-    # 5. Operation A3: 'filter' every pickup/dropoff pairing with timings in minutes since midnight of the leaving day
+    # 5. Operation A3: 'crossJoin' origin and destination DFs +
+    # 'filter' every pickup/dropoff pairing with timings in minutes since midnight of the leaving day +
+    # 'withColumn' to calculate:
+    #   - the distance between the pickup and drop-off stations
+    #   - the time the user will arrive at the pickup station
+    #   - the time the user will arrive at the drop-off station
+    #   - the time the user will arrive at the destination
     leave_hour, leave_minute = [int(part) for part in leaving_at.split(":")]
     leaving_minute = leave_hour * 60 + leave_minute
 
@@ -205,8 +214,10 @@ def my_main(spark,
                             F.col(TIME_AT_DROP_OFF) + F.col(WALKING_TIME_TO_DESTINATION))
                 .cache())
 
-    # 6. Operation A4: 'select' to keep only the relevant columns for the next steps
-    next_day = day_of_week % 7 + 1 # if it's Sunday (7), the next day is Monday (1)
+    # 6. Operation A4: 'select' to keep only the relevant columns for the next steps +
+    # 'withColumn' to calculate the relative minute of the day for each station status report, so we can compare it with the pickup and drop-off times +
+    # 'filter' to keep only the station status reports that are relevant for the pickup and drop-off times
+    next_day = day_of_week % 7 + 1 # if it's Sunday (1), the next day is Monday (2)
 
     minute_of_day = (F.hour(F.col(LAST_REPORTED)) * 60 # calculate the minute of the day for each station status report
                      + F.minute(F.col(LAST_REPORTED))
@@ -222,7 +233,10 @@ def my_main(spark,
     # 7. Operation A5: 'select' to get distinct pickup ids and minute
     pickup_timesDF = routesDF.select(PICKUP_ID, TIME_AT_PICK_UP).distinct()
 
-    # 8. Operation A6: 'join' to get the chance of a bike at each pickup station when we get there
+    # 8. Operation A6: 'join' to get the chance of a bike at each pickup station when we get there +
+    # 'filter' to keep only the station status reports that are within the tolerance of the pickup time +
+    # 'groupBy' pickup id to calculate the average chance of a bike being available at the pickup station when we get there,
+    # as well as the average number of bikes available and the number of samples used to calculate the average
     pickup_chanceDF = (snapshotDF
                        .join(F.broadcast(pickup_timesDF),
                              snapshotDF[STATION_ID] == pickup_timesDF[PICKUP_ID])
@@ -236,7 +250,10 @@ def my_main(spark,
     # 9. Operation A7: 'select' to get distinct dropoff ids and minute
     dropoff_timesDF = routesDF.select(PICKUP_ID, DROPOFF_ID, TIME_AT_DROP_OFF)
 
-    # 10. Operation A8: 'join' to get the chance of a dock at each dropoff station when we get there
+    # 10. Operation A8: 'join' to get the chance of a dock at each dropoff station when we get there +
+    # 'filter' to keep only the station status reports that are within the tolerance of the dropoff time +
+    # 'groupBy' pickup id and dropoff id to calculate the average chance of a dock being available at the dropoff station when we get there,
+    # as well as the average number of docks available and the number of samples used to calculate the average
     dropoff_chanceDF = (snapshotDF
                         .join(F.broadcast(dropoff_timesDF),
                               snapshotDF[STATION_ID] == dropoff_timesDF[DROPOFF_ID])
@@ -268,7 +285,7 @@ def my_main(spark,
                           F.round(CHANCE_OF_AVAILABILITY, 2).alias(CHANCE_OF_AVAILABILITY),
                           PICKUP_SAMPLES, DROPOFF_SAMPLES))
 
-    # Operation A10: 'filter' to get only the solutions with a total chance of availability above the threshold
+    # Operation A10: 'filter' to get only the solutions with a total chance of availability at or above the threshold
     accetableSolutionsDF = (allSolutionsDF
                             .filter(F.col(CHANCE_OF_AVAILABILITY) >= min_total_availability)
                             .orderBy(F.asc(TIME_AT_DESTINATION), F.desc(CHANCE_OF_AVAILABILITY), F.asc(DISTANCE_DROPOFF)))
@@ -291,7 +308,7 @@ def my_main(spark,
 
     # ---------------------------------------
 
-    # Operation A1: 'collect'
+    # Operation A11: 'collect'
     resVAL = solutionDF.collect()
     for item in resVAL:
         print(item)
@@ -302,10 +319,10 @@ def my_main(spark,
 # PYTHON PROGRAM EXECUTION
 #
 # Usage:
-#   python3 ./A01_ex8.py <dataset_dir> <leaving_at> <day_of_week> <leaving_from> <destination> <average_speed>
+#   python3 ./A01_ex8.py <dataset_dir> <leaving_at> <day_of_week> <leaving_from> <destination> <average_speed> <min_total_availability>
 #
-# Example (ten most stressed stations on weekday mornings):
-#   python3 ./A01_ex8.py "../../FileStore/tables/my_datasets/A01_micro_dataset_8/" 08:00 1 53.366346,-6.218066 53.341677,-6.260252 15
+# Example:
+#   python3 ./A01_ex8.py "../../FileStore/tables/my_datasets/A01_micro_dataset_8/" 08:00 1 53.366346,-6.218066 53.341677,-6.260252 15 0.8
 #
 # --------------------------------------------------------
 if __name__ == '__main__':
@@ -313,11 +330,11 @@ if __name__ == '__main__':
     my_dataset_dir = "../../FileStore/tables/my_datasets/A01_micro_dataset_8/"
     # my_dataset_dir = "../../FileStore/tables/my_datasets/my_ex8_dataset_complete/"
     leaving_at = "08:00"
-    day_of_week = 1
+    day_of_week = 1 # sunday
     leaving_from = [53.366346, -6.218066]
     destination = [53.341677, -6.260252]
     avg_speed = 15 # km/h
-    min_total_availability = 0.8 # minimum total availability to consider a route
+    min_total_availability = 0.8 # minimum total availability to consider a route (default is at least 80% chance of having a bike at the pickup station and a dock at the dropoff station)
 
     if len(sys.argv) > 1:
         my_dataset_dir = sys.argv[1]
