@@ -101,7 +101,7 @@ def is_weekend(date):
 # ------------------------------------------
 def is_on_schedule(delay, delay_limit):
     # both ends count as on schedule (e.g. with a limit of 60, a delay of exactly 60 or -60 is still fine)
-    return (-1) * delay_limit <= delay <= delay_limit
+    return -delay_limit <= delay <= delay_limit
 
 
 # ------------------------------------------
@@ -121,23 +121,28 @@ def my_main(sc,
     tupleRDD = inputRDD.map(process_line)
 
     # 3. Operation T2: 'filter' to keep only the measurements of the lines we want, in the hours we want, on a saturday or sunday
-    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
-    filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and
-                                            x[BUS_LINE] in line_list and
-                                            get_hour(x[DATE]) in hours_list and
-                                            is_weekend(x[DATE]))
+    filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and # the row needs to have the 10 fields
+                                            x[BUS_LINE] in line_list and # the bus line should match the input line list
+                                            get_hour(x[DATE]) in hours_list and # the row should be within the given hour range
+                                            is_weekend(x[DATE])) # it should be on a weekend
 
     # 4. Operation T3: 'map' to (bus line, (on schedule, 1)) so we can count both things in one go
     #    on schedule is 1 if the delay is within [-delay_limit, delay_limit] (both ends included) and 0 otherwise
-    countRDD = filteredRDD.map(lambda x: (x[BUS_LINE], (1 if is_on_schedule(x[DELAY], delay_limit) else 0, 1)))
+    countRDD = filteredRDD.map(lambda x: (x[BUS_LINE], (int(is_on_schedule(x[DELAY], delay_limit)), 1)))
 
     # 5. Operation T4: 'reduceByKey' to add up the on schedule and total counts per bus line
-    #    edge case: a line from line_list with no measurements never gets here, so it won't show up in the result (which is what we want)
     reducedRDD = countRDD.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]))
 
     # 6. Operation T5: 'map' to work out the percentage and get the (line, percentage, total, on time) format
-    #    total is always at least 1 here, so no division by zero
-    formattedRDD = reducedRDD.map(lambda x: (x[0], round((x[1][0] / x[1][1]) * 100, 2), x[1][1], x[1][0]))
+    def map_percentage(record):
+        line = record[0]
+        total_buses = record[1][1]
+        on_time_buses = record[1][0]
+        percentage = round(on_time_buses / total_buses * 100, 2)
+
+        return line, percentage, total_buses, on_time_buses
+
+    formattedRDD = reducedRDD.map(map_percentage)
 
     # 7. Operation T6: 'sortBy' percentage (biggest first), and on a tie by bus line (smallest first)
     #    we sort on the rounded percentage, as that's the value we actually print

@@ -21,7 +21,7 @@
 # IMPORTS
 # ------------------------------------------
 import pyspark
-import pyspark.sql.functions
+import pyspark.sql.functions as F
 import sys
 import datetime
 
@@ -81,7 +81,6 @@ def my_main(spark,
     #    the window is [start, end), so a row at exactly the end time doesn't count
     #    we work out the end time once here instead of for every row. The dates all have the same "yyyy-mm-dd hh:mm:ss" format,
     #    so we can compare them as plain strings and skip parsing every row
-    #    edge case: the window can cross midnight (e.g. 23:50 + 1800 seconds), timedelta takes care of moving to the next day
     end_time = (datetime.datetime.strptime(current_time, DATE_FORMAT) + datetime.timedelta(seconds=seconds_horizon)).strftime(DATE_FORMAT)
     filteredDF = inputDF.filter((inputDF[AT_STOP] == 1) &
                                 (inputDF[DATE] >= current_time) &
@@ -90,17 +89,16 @@ def my_main(spark,
     # 4. Operation T2: 'groupBy' bus line + 'agg' to get the sorted list of different stops of each line
     #    collect_set already gets rid of repeated stops, so a line stopping twice at the same stop only counts it once
     stopsDF = filteredDF.groupBy(BUS_LINE_ID) \
-                        .agg(pyspark.sql.functions.array_sort(pyspark.sql.functions.collect_set(CLOSER_STOP_ID)).alias(STOPS))
+                        .agg(F.array_sort(F.collect_set(CLOSER_STOP_ID)).alias(STOPS))
 
     # 5. Operation T3: 'withColumn' to add how many stops each line has
-    sizeDF = stopsDF.withColumn(NUM_STOPS, pyspark.sql.functions.size(stopsDF[STOPS]))
+    sizeDF = stopsDF.withColumn(NUM_STOPS, F.size(stopsDF[STOPS]))
 
     # 6. Operation T4: 'agg' to get the max number of stops of any line (a DF with a single row)
-    maxDF = sizeDF.agg(pyspark.sql.functions.max(NUM_STOPS).alias(MAX_STOPS))
+    maxDF = sizeDF.agg(F.max(NUM_STOPS).alias(MAX_STOPS))
 
     # 7. Operation T5: 'join' to keep only the line(s) whose number of stops is that max
     #    doing it with a join keeps it all inside Spark, so we don't need an extra action to get the max first
-    #    edge case: if two or more lines tie on the max they all match the join, so we keep all of them
     bestDF = sizeDF.join(maxDF, sizeDF[NUM_STOPS] == maxDF[MAX_STOPS])
 
     # 8. Operation T6: 'select' to keep only the (line, stops) columns

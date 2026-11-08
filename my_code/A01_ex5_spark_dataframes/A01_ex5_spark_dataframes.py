@@ -21,7 +21,7 @@
 # IMPORTS
 # ------------------------------------------
 import pyspark
-import pyspark.sql.functions
+import pyspark.sql.functions as F
 import sys
 
 # ------------------------------------------
@@ -81,17 +81,15 @@ def my_main(spark,
 
     # 4. Operation T2: 'withColumn' + 'lag' over a window per vehicle (sorted by date) to bring the previous date of the same vehicle into each row
     #    the window keeps each vehicle separate, so we never compare dates of two different buses
-    #    edge case: the first row of each vehicle has no previous date, so lag gives null there
     vehicleWindow = pyspark.sql.Window.partitionBy(VEHICLE_ID).orderBy(DATE)
-    lagDF = filteredDF.withColumn(GAP_START, pyspark.sql.functions.lag(DATE).over(vehicleWindow)) \
+    lagDF = filteredDF.withColumn(GAP_START, F.lag(DATE).over(vehicleWindow)) \
                       .withColumnRenamed(DATE, GAP_END)
 
     # 5. Operation T3: 'withColumn' to work out the gap in seconds between the previous date and this one
-    #    edge case: when the start is null (first row of a vehicle) the gap is null too
     gapDF = lagDF.withColumn(GAP_SECONDS,
-                             pyspark.sql.functions.unix_timestamp(lagDF[GAP_END]) - pyspark.sql.functions.unix_timestamp(lagDF[GAP_START]))
+                             F.unix_timestamp(lagDF[GAP_END]) - F.unix_timestamp(lagDF[GAP_START]))
 
-    # 6. Operation T4: 'filter' to keep only the gaps strictly bigger than gap_limit_seconds (a gap of exactly the limit is fine)
+    # 6. Operation T4: 'filter' to keep only the gaps strictly bigger than gap_limit_seconds
     #    null > x is never true, so the first row of each vehicle gets dropped here too
     ghostDF = gapDF.filter(gapDF[GAP_SECONDS] > gap_limit_seconds)
 
@@ -99,7 +97,6 @@ def my_main(spark,
     selectedDF = ghostDF.select(VEHICLE_ID, GAP_START, GAP_END, GAP_SECONDS)
 
     # 8. Operation T6: 'orderBy' gap start time
-    #    edge case: if two gaps start at the exact same time we use the vehicle as a tie breaker, so the output is always in the same order
     solutionDF = selectedDF.orderBy(GAP_START, VEHICLE_ID)
 
     # ---------------------------------------

@@ -158,7 +158,6 @@ def my_main(sc,
 
     # 3. Operation T2: 'filter' to keep only the measurements of day_picked
     #    the date always starts with "yyyy-mm-dd", so startswith is enough to check the day
-    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
     filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and x[DATE].startswith(day_picked))
 
     # 4. Operation T3: 'map' to (vehicle, (date, latitude, longitude)), that's all we need to work out the speeds
@@ -169,7 +168,6 @@ def my_main(sc,
     groupedRDD = vehicleRDD.groupByKey()
 
     # 6. Operation T5: 'flatMap' to get the average speed (km/h) of each vehicle using only its valid pairs
-    #    edge case: a vehicle with no valid pairs (only one measurement, or all its pairs were GPS noise) gives nothing back, so it gets dropped
     avgSpeedRDD = groupedRDD.flatMap(lambda x: get_average_speed(x[0], x[1], max_speed_accepted))
 
     # 7. Operation T6: 'map' to (bucket id, 1)
@@ -177,7 +175,6 @@ def my_main(sc,
     bucketRDD = avgSpeedRDD.map(lambda x: (int(math.floor(x[1] / bucket_size_kmh)), 1))
 
     # 8. Operation T7: 'reduceByKey' to count the vehicles in each bucket
-    #    edge case: empty buckets never get a key, so they don't show up in the result (which is what we want)
     countRDD = bucketRDD.reduceByKey(lambda a, b: a + b)
 
     # 9. Operation T8: 'sortByKey' to sort by bucket id

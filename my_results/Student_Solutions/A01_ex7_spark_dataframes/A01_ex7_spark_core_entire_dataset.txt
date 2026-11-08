@@ -1,0 +1,11 @@
+Row(bucketID=0, bucketRange='0.0_5.0', numVehicles=1)
+Row(bucketID=1, bucketRange='5.0_10.0', numVehicles=4)
+Row(bucketID=2, bucketRange='10.0_15.0', numVehicles=299)
+Row(bucketID=3, bucketRange='15.0_20.0', numVehicles=455)
+Row(bucketID=4, bucketRange='20.0_25.0', numVehicles=56)
+Row(bucketID=5, bucketRange='25.0_30.0', numVehicles=5)
+Row(bucketID=6, bucketRange='30.0_35.0', numVehicles=1)
+
+
+
+--- Completed ---

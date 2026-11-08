@@ -1,0 +1,18 @@
+Row(busLinePatternID='00400001')
+Row(busLinePatternID='00400002')
+Row(busLinePatternID='00400003')
+Row(busLinePatternID='00400004')
+Row(busLinePatternID='00401001')
+Row(busLinePatternID='00401002')
+Row(busLinePatternID='00401003')
+Row(busLinePatternID='040B0001')
+Row(busLinePatternID='040B0002')
+Row(busLinePatternID='040B1001')
+Row(busLinePatternID='040D0001')
+Row(busLinePatternID='040D0002')
+Row(busLinePatternID='040D1001')
+Row(busLinePatternID='040D1002')
+
+
+
+--- Completed ---

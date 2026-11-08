@@ -21,7 +21,7 @@
 # IMPORTS
 # ------------------------------------------
 import pyspark
-import pyspark.sql.functions
+import pyspark.sql.functions as F
 import sys
 
 # ------------------------------------------
@@ -74,10 +74,10 @@ def my_main(spark,
     infoDF = infoDF.persist()
 
     # 5. Operation T2: We apply 'orderBy' (decreasing "delay") and 'limit' to obtain a new DF (e.g., maxDF) with a single Row: the one with the maximum "delay".
-    maxDF = infoDF.orderBy(pyspark.sql.functions.desc(DELAY)).limit(1)
+    maxDF = infoDF.orderBy(F.desc(DELAY)).limit(1)
 
     # 6. Operation T3: We apply 'orderBy' (increasing "delay") and 'limit' to obtain a new DF (e.g., minDF) with a single Row: the one with the minimum "delay".
-    minDF = infoDF.orderBy(pyspark.sql.functions.asc(DELAY)).limit(1)
+    minDF = infoDF.orderBy(F.asc(DELAY)).limit(1)
 
     # 7. Operation T4: We apply 'union' to obtain a new DF (e.g., solutionDF) with the two Rows: the one of maxDF first, and the one of minDF second.
     solutionDF = maxDF.union(minDF)

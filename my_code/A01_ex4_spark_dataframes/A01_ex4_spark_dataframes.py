@@ -21,7 +21,7 @@
 # IMPORTS
 # ------------------------------------------
 import pyspark
-import pyspark.sql.functions
+import pyspark.sql.functions as F
 import sys
 
 # ------------------------------------------
@@ -81,29 +81,29 @@ def my_main(spark,
     #    dayofweek gives 1 for sunday up to 7 for saturday, so 1 and 7 are the weekend
     filteredDF = inputDF.filter((inputDF[BUS_LINE_ID].isin(line_list)) &
                                 (inputDF[DATE].substr(12, 2).isin(hours_list)) &
-                                (pyspark.sql.functions.dayofweek(inputDF[DATE]).isin([1, 7])))
+                                (F.dayofweek(inputDF[DATE]).isin([1, 7])))
 
     # 4. Operation T2: 'withColumn' to flag each row as on schedule (1) or not (0)
     #    both ends count as on schedule (e.g. with a limit of 60, a delay of exactly 60 or -60 is still fine)
     flaggedDF = filteredDF.withColumn(IS_ON_SCHEDULE,
-                                      pyspark.sql.functions.when((filteredDF[DELAY] >= (-1) * delay_limit) &
+                                      F.when((filteredDF[DELAY] >= (-1) * delay_limit) &
                                                                  (filteredDF[DELAY] <= delay_limit), 1).otherwise(0))
 
     # 5. Operation T3: 'groupBy' bus line + 'agg' to count the total and on time rows per line
     #    edge case: a line from line_list with no rows never gets a group, so it won't show up in the result (which is what we want)
-    countsDF = flaggedDF.groupBy(BUS_LINE_ID).agg(pyspark.sql.functions.count("*").alias(TOTAL),
-                                                  pyspark.sql.functions.sum(IS_ON_SCHEDULE).alias(ON_TIME))
+    countsDF = flaggedDF.groupBy(BUS_LINE_ID).agg(F.count("*").alias(TOTAL),
+                                                  F.sum(IS_ON_SCHEDULE).alias(ON_TIME))
 
     # 6. Operation T4: 'select' to work out the percentage (rounded to 2 decimals) and get the (line, percentage, total, on time) format
     #    total is always at least 1 here, so no division by zero
     formattedDF = countsDF.select(BUS_LINE_ID,
-                                  pyspark.sql.functions.round(countsDF[ON_TIME] / countsDF[TOTAL] * 100, 2).alias(PERCENTAGE),
+                                  F.round(countsDF[ON_TIME] / countsDF[TOTAL] * 100, 2).alias(PERCENTAGE),
                                   TOTAL,
                                   ON_TIME)
 
     # 7. Operation T5: 'orderBy' percentage (biggest first), and on a tie by bus line (smallest first)
     #    we sort on the rounded percentage, as that's the value we actually print
-    solutionDF = formattedDF.orderBy(pyspark.sql.functions.desc(PERCENTAGE), pyspark.sql.functions.asc(BUS_LINE_ID))
+    solutionDF = formattedDF.orderBy(F.desc(PERCENTAGE), F.asc(BUS_LINE_ID))
 
     # ---------------------------------------
 

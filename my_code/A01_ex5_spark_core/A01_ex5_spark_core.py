@@ -122,7 +122,6 @@ def my_main(sc,
 
     # 3. Operation T2: 'filter' to keep only the measurements of bus_line_id on day_picked
     #    the date always starts with "yyyy-mm-dd", so startswith is enough to check the day
-    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
     filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and x[BUS_LINE] == bus_line_id and x[DATE].startswith(day_picked))
 
     # 4. Operation T3: 'map' to (vehicle, date), that's all we need to find the gaps
@@ -134,11 +133,9 @@ def my_main(sc,
     groupedRDD = vehicleRDD.groupByKey()
 
     # 6. Operation T5: 'flatMap' to sort each vehicle's dates and turn every gap bigger than gap_limit_seconds into a (vehicle, start, end, seconds) item
-    #    edge case: a vehicle with a single measurement has no pairs, so it gives no gaps and doesn't show up
     gapRDD = groupedRDD.flatMap(lambda x: get_ghost_gaps(x[0], x[1], gap_limit_seconds))
 
     # 7. Operation T6: 'sortBy' gap start time
-    #    edge case: if two gaps start at the exact same time we use the vehicle as a tie breaker, so the output is always in the same order
     solutionRDD = gapRDD.sortBy(lambda x: (x[1], x[0]))
 
     # ---------------------------------------

@@ -116,11 +116,9 @@ def my_main(sc,
     tupleRDD = inputRDD.map(process_line)
 
     # 3. Operation T2: 'filter' to keep only the measurements where the bus is stopped (At_Stop == 1) inside the time window
-    #    the window is [start, end), so a measurement at exactly the end time doesn't count
+    #    the window is [start, end], so a measurement at exactly the end time doesn't count
     #    we work out the end time once here instead of for every row. The dates all have the same "yyyy-mm-dd hh:mm:ss" format,
     #    so we can compare them as plain strings and skip parsing every row
-    #    edge case: the window can cross midnight (e.g. 23:50 + 1800 seconds), timedelta takes care of moving to the next day
-    #    edge case: process_line gives back an empty tuple for lines that don't have 10 fields (e.g. a blank line), so we skip those first
     end_time = (datetime.datetime.strptime(current_time, DATE_FORMAT) + datetime.timedelta(seconds=seconds_horizon)).strftime(DATE_FORMAT)
     filteredRDD = tupleRDD.filter(lambda x: len(x) == 10 and x[AT_STOP] == 1 and current_time <= x[DATE] < end_time)
 
@@ -137,7 +135,6 @@ def my_main(sc,
     allRDD = stopsRDD.map(lambda x: ("ALL", [x]))
 
     # 8. Operation T7: 'reduceByKey' to keep only the bus line(s) with the most stops
-    #    edge case: if two or more lines tie on the max, keep_most_stops keeps all of them
     bestRDD = allRDD.reduceByKey(keep_most_stops)
 
     # 9. Operation T8: 'flatMap' to drop the "ALL" key and get one item per bus line

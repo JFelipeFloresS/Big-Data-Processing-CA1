@@ -21,7 +21,7 @@
 # IMPORTS
 # ------------------------------------------
 import pyspark
-import pyspark.sql.functions
+import pyspark.sql.functions as F
 import sys
 
 # ------------------------------------------
@@ -58,18 +58,18 @@ def haversine_km(lat1, lon1, lat2, lon2):
     # same formula as the core version, but built with Spark columns so it runs inside Spark
 
     # 1. We convert the degrees to radians
-    lat1 = pyspark.sql.functions.radians(lat1)
-    lon1 = pyspark.sql.functions.radians(lon1)
-    lat2 = pyspark.sql.functions.radians(lat2)
-    lon2 = pyspark.sql.functions.radians(lon2)
+    lat1 = F.radians(lat1)
+    lon1 = F.radians(lon1)
+    lat2 = F.radians(lat2)
+    lon2 = F.radians(lon2)
 
     # 2. Haversine formula: h = sin^2((lat2 - lat1) / 2) + cos(lat1) * cos(lat2) * sin^2((lon2 - lon1) / 2)
-    h = pyspark.sql.functions.pow(pyspark.sql.functions.sin((lat2 - lat1) / 2), 2) + \
-        pyspark.sql.functions.cos(lat1) * pyspark.sql.functions.cos(lat2) * pyspark.sql.functions.pow(pyspark.sql.functions.sin((lon2 - lon1) / 2), 2)
+    h = F.pow(F.sin((lat2 - lat1) / 2), 2) + \
+        F.cos(lat1) * F.cos(lat2) * F.pow(F.sin((lon2 - lon1) / 2), 2)
 
     # 3. We turn h into the angle between the 2 points (2 * arcsin(sqrt(h))) and multiply it by the radius of the earth
     #    edge case: h can go a tiny bit over 1 because of rounding, which would make asin give null, so we cap it at 1
-    return 2 * EARTH_RADIUS_KM * pyspark.sql.functions.asin(pyspark.sql.functions.sqrt(pyspark.sql.functions.least(pyspark.sql.functions.lit(1.0), h)))
+    return 2 * EARTH_RADIUS_KM * F.asin(F.sqrt(F.least(F.lit(1.0), h)))
 
 # ------------------------------------------
 # FUNCTION my_main
@@ -112,19 +112,16 @@ def my_main(spark,
 
     # 5. Operation T3: 'withColumn' + 'lag' over a window per vehicle (sorted by date) to bring the previous date and position of the same vehicle into each row
     #    the window keeps each vehicle separate, so we never pair up measurements of two different buses
-    #    edge case: the first row of each vehicle has no previous row, so lag gives null there
     vehicleWindow = pyspark.sql.Window.partitionBy(VEHICLE_ID).orderBy(DATE)
-    lagDF = selectedDF.withColumn(PREV_DATE, pyspark.sql.functions.lag(DATE).over(vehicleWindow)) \
-                      .withColumn(PREV_LATITUDE, pyspark.sql.functions.lag(LATITUDE).over(vehicleWindow)) \
-                      .withColumn(PREV_LONGITUDE, pyspark.sql.functions.lag(LONGITUDE).over(vehicleWindow))
+    lagDF = selectedDF.withColumn(PREV_DATE, F.lag(DATE).over(vehicleWindow)) \
+                      .withColumn(PREV_LATITUDE, F.lag(LATITUDE).over(vehicleWindow)) \
+                      .withColumn(PREV_LONGITUDE, F.lag(LONGITUDE).over(vehicleWindow))
 
     # 6. Operation T4: 'withColumn' to work out the seconds between the previous row and this one
     secondsDF = lagDF.withColumn(SECONDS,
-                                 pyspark.sql.functions.unix_timestamp(lagDF[DATE]) - pyspark.sql.functions.unix_timestamp(lagDF[PREV_DATE]))
+                                 F.unix_timestamp(lagDF[DATE]) - F.unix_timestamp(lagDF[PREV_DATE]))
 
     # 7. Operation T5: 'filter' to keep only the rows that make a proper pair with the previous one
-    #    edge case: the first row of each vehicle has null seconds, and null > 0 is never true, so it gets dropped here
-    #    edge case: two measurements with the same time would mean dividing by 0, so we can't get a speed out of them and we skip the pair
     pairsDF = secondsDF.filter(secondsDF[SECONDS] > 0)
 
     # 8. Operation T6: 'withColumn' to work out the speed (m/s) of each pair with the haversine formula
@@ -135,22 +132,20 @@ def my_main(spark,
     validDF = speedDF.filter(speedDF[SPEED_MS] <= max_speed_accepted)
 
     # 10. Operation T8: 'groupBy' vehicle + 'agg' to get the average speed of each vehicle in km/h
-    #     edge case: a vehicle with no valid pairs (only one measurement, or all its pairs were GPS noise) has no rows left, so it gets dropped
-    avgSpeedDF = validDF.groupBy(VEHICLE_ID).agg(pyspark.sql.functions.avg(validDF[SPEED_MS] * 3.6).alias(AVG_SPEED_KMH))
+    avgSpeedDF = validDF.groupBy(VEHICLE_ID).agg(F.avg(validDF[SPEED_MS] * 3.6).alias(AVG_SPEED_KMH))
 
     # 11. Operation T9: 'withColumn' to work out the bucket of each vehicle
     #     bucket i covers [i * bucket_size_kmh, (i+1) * bucket_size_kmh), so an average of exactly 10.0 with size 5.0 goes in bucket 2, not 1
-    bucketDF = avgSpeedDF.withColumn(BUCKET_ID, pyspark.sql.functions.floor(avgSpeedDF[AVG_SPEED_KMH] / bucket_size_kmh).cast("int"))
+    bucketDF = avgSpeedDF.withColumn(BUCKET_ID, F.floor(avgSpeedDF[AVG_SPEED_KMH] / bucket_size_kmh).cast("int"))
 
     # 12. Operation T10: 'groupBy' bucket + 'agg' to count the vehicles in each bucket
-    #     edge case: empty buckets never get a group, so they don't show up in the result (which is what we want)
-    countDF = bucketDF.groupBy(BUCKET_ID).agg(pyspark.sql.functions.count("*").alias(NUM_VEHICLES))
+    countDF = bucketDF.groupBy(BUCKET_ID).agg(F.count("*").alias(NUM_VEHICLES))
 
     # 13. Operation T11: 'withColumn' to build the "lo_hi" range string
     #     casting a double to string gives "5.0" (same as python's str), so the format matches the core version
     rangeDF = countDF.withColumn(BUCKET_RANGE,
-                                 pyspark.sql.functions.concat((countDF[BUCKET_ID] * bucket_size_kmh).cast("string"),
-                                                              pyspark.sql.functions.lit("_"),
+                                 F.concat((countDF[BUCKET_ID] * bucket_size_kmh).cast("string"),
+                                                              F.lit("_"),
                                                               ((countDF[BUCKET_ID] + 1) * bucket_size_kmh).cast("string")))
 
     # 14. Operation T12: 'select' to get the (bucket id, range, vehicles) columns + 'orderBy' bucket id
